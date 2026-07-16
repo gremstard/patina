@@ -8,12 +8,19 @@
     "test": "node --test",
     "worldindex": "node scripts/build-world-index.js",
     "bundle": "node scripts/bundle-web.js",
-    "smoke": "node scripts/bundle-web.js && node scripts/smoke-web.mjs"
+    "bundle:city": "node scripts/bundle-city.js",
+    "build": "node scripts/bundle-web.js && node scripts/bundle-city.js",
+    "smoke": "node scripts/bundle-web.js && node scripts/smoke-web.mjs",
+    "smoke:city": "node scripts/bundle-city.js && node scripts/smoke-city.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "playwright-core": "^1.61.1"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
   }
 }

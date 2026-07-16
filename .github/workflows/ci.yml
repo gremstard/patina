@@ -13,8 +13,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # The determinism test (§5) has zero dependencies — it is the guard that
-      # the world can't silently drift. It must pass on every push.
+      - run: npm ci
+      # The determinism test (§5) is the guard that the world can't silently
+      # drift. It must pass on every push.
       - run: node --test
-      # The world-map bundle must build cleanly.
+      # Both bundles must build cleanly (the city bundle needs esbuild + three).
       - run: node scripts/bundle-web.js
+      - run: node scripts/bundle-city.js

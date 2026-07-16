@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Patina — City</title>
+<style>
+  :root {
+    --ground: #0b0e10;
+    --ground-2: #0e1315;
+    --panel: #141a1d;
+    --panel-2: #101619;
+    --ink: #c8d0cb;
+    --ink-dim: #7d8a84;
+    --ink-faint: #4a5551;
+    --rust: #d0703c;
+    --rust-bright: #e89a5a;
+    --line: #232c30;
+    --mono: ui-monospace, "DejaVu Sans Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 14px; overflow: hidden; -webkit-font-smoothing: antialiased; }
+
+  #app { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+
+  header { display: flex; align-items: baseline; gap: 18px; padding: 14px 20px 12px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, var(--ground-2), var(--ground)); flex-wrap: wrap; }
+  .wordmark { font-size: 28px; font-weight: 700; letter-spacing: 0.4em; margin: 0; padding-left: 0.4em; background: linear-gradient(100deg, var(--rust-bright), var(--rust) 40%, #8593a0); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .crumb { color: var(--ink-faint); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .crumb b { color: var(--rust); }
+  .seedbar { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .seedbar label { font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); }
+  input[type="number"], select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font-family: var(--mono); font-size: 13px; padding: 6px 8px; border-radius: 2px; }
+  input[type="number"] { width: 104px; font-variant-numeric: tabular-nums; }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
+  button { background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 11px; border-radius: 2px; cursor: pointer; transition: border-color .12s, color .12s, background .12s; }
+  button:hover { border-color: var(--rust); color: var(--rust-bright); }
+  button.on { border-color: var(--rust); color: var(--rust-bright); background: rgba(208,112,60,0.08); }
+
+  main { display: grid; grid-template-columns: 214px 1fr; min-height: 0; }
+  .rail { border-right: 1px solid var(--line); background: var(--panel-2); padding: 16px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+  .rail h2 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 10px; font-weight: 600; }
+  .tiers { display: flex; gap: 6px; }
+  .tiers button { flex: 1; }
+  .stats { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .stat { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(35,44,48,0.6); padding-bottom: 5px; }
+  .stat .k { color: var(--ink-faint); letter-spacing: 0.05em; }
+  .stat .v { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .stat .v.accent { color: var(--rust-bright); }
+  .zonekey { font-size: 10.5px; color: var(--ink-dim); line-height: 1.7; }
+  .zonekey b { color: var(--ink); }
+  .zonekey .c { color: var(--rust-bright); } .zonekey .r { color: #d99a4e; } .zonekey .e { color: #9fae86; }
+  .toggles { display: flex; flex-direction: column; gap: 7px; }
+  .toggles button { text-align: left; }
+  .field-lbl { display: flex; flex-direction: column; gap: 5px; }
+  .field-lbl span { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); }
+
+  .viewport { position: relative; overflow: hidden; background: #05070a; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+  #view:active { cursor: grabbing; }
+  .hint { position: absolute; left: 12px; bottom: 10px; font-size: 10px; letter-spacing: 0.08em; color: var(--ink-dim); background: rgba(10,14,16,0.5); border: 1px solid var(--line); padding: 4px 8px; border-radius: 2px; pointer-events: none; }
+
+  footer { display: flex; align-items: center; gap: 16px; padding: 8px 20px; border-top: 1px solid var(--line); background: var(--ground-2); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint); flex-wrap: wrap; }
+  footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
+  footer .spacer { margin-left: auto; }
+
+  @media (max-width: 860px) {
+    body { overflow: auto; } #app { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .rail { border-right: none; border-bottom: 1px solid var(--line); }
+    .viewport { height: 64vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 class="wordmark">PATINA</h1>
+    <span class="crumb">Phase 3 · <b>One city</b></span>
+    <div class="seedbar">
+      <label class="field-lbl"><span>Culture palette</span></label>
+      <select id="palette" aria-label="Culture palette"></select>
+      <label for="seed">Seed</label>
+      <input id="seed" type="number" min="0" step="1" value="1997" />
+      <button id="reroll">Re-roll</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="rail">
+      <section>
+        <h2>Tier</h2>
+        <div class="tiers">
+          <button id="t-metro">Metro</button>
+          <button id="t-city" class="on">City</button>
+          <button id="t-town">Town</button>
+        </div>
+      </section>
+      <section>
+        <h2>This city</h2>
+        <div class="stats">
+          <div class="stat"><span class="k">buildings</span><span class="v" id="s-bldg">—</span></div>
+          <div class="stat"><span class="k">blocks</span><span class="v" id="s-blocks">—</span></div>
+          <div class="stat"><span class="k">triangles</span><span class="v" id="s-tris">—</span></div>
+          <div class="stat"><span class="k">tallest</span><span class="v" id="s-maxh">—</span></div>
+          <div class="stat"><span class="k">draw calls</span><span class="v accent" id="s-calls">—</span></div>
+          <div class="stat"><span class="k">gen time</span><span class="v" id="s-gen">—</span></div>
+          <div class="stat"><span class="k">digest</span><span class="v" id="s-digest">—</span></div>
+        </div>
+      </section>
+      <section>
+        <h2>Zoning · §7</h2>
+        <div class="zonekey">
+          blocks: <b id="s-zones">—</b><br />
+          <span class="c">■ core</span> towers · <span class="r">■ ring</span> · <span class="e">■ edge</span> houses<br />
+          density gradient, one function.
+        </div>
+      </section>
+      <section>
+        <h2>View</h2>
+        <div class="toggles">
+          <button id="t-auto" class="on">↻ Auto-orbit</button>
+          <button id="t-fog">○ Gameplay fog 100m</button>
+          <button id="t-wire">▨ Wireframe</button>
+        </div>
+      </section>
+    </aside>
+
+    <div class="viewport">
+      <canvas id="view"></canvas>
+      <div class="hint">drag to orbit · wheel to zoom</div>
+    </div>
+  </main>
+
+  <footer>
+    <span class="phase">Phase 3 · One city</span>
+    <span>merged geometry · PSX 260-line target · vertex snapping · dither</span>
+    <span class="spacer"></span>
+    <span>one BufferGeometry → ~2 draw calls</span>
+  </footer>
+</div>
+<script type="module" src="./city.js"></script>
+</body>
+</html>
