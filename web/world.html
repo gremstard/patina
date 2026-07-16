@@ -48,6 +48,8 @@
   #map { position: absolute; right: 14px; top: 14px; width: 200px; height: 200px; border: 1px solid var(--line); border-radius: 3px; background: #0a0d0f; cursor: pointer; image-rendering: pixelated; box-shadow: 0 4px 18px rgba(0,0,0,0.5); }
   #map.open { right: 50%; top: 50%; transform: translate(50%,-50%); width: min(78vmin,620px); height: min(78vmin,620px); border-color: var(--rust); z-index: 10; }
   .maphint { position: absolute; right: 14px; top: 220px; font-size: 10px; letter-spacing: 0.06em; color: var(--ink-dim); pointer-events: none; }
+  #prompt { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); pointer-events: none; opacity: 0; transition: opacity .12s; background: rgba(10,14,16,0.88); border: 1px solid var(--rust); border-radius: 3px; padding: 8px 14px; font-size: 13px; letter-spacing: 0.04em; }
+  #prompt kbd { font-family: var(--mono); color: var(--ground); background: var(--rust-bright); border-radius: 2px; padding: 1px 7px; margin-right: 4px; font-weight: 700; }
 
   footer { display: flex; align-items: center; gap: 16px; padding: 7px 20px; border-top: 1px solid var(--line); background: var(--ground-2); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint); flex-wrap: wrap; }
   footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
@@ -78,8 +80,9 @@
       <section>
         <h2>Controls</h2>
         <div class="keys">
-          <kbd>W</kbd><kbd>S</kbd> drive<br />
-          <kbd>A</kbd><kbd>D</kbd> steer<br />
+          <kbd>W</kbd><kbd>S</kbd> walk · drive<br />
+          <kbd>A</kbd><kbd>D</kbd> turn · steer<br />
+          <kbd>Shift</kbd> run · <kbd>E</kbd> in/out of a car<br />
           <kbd>M</kbd> world map<br />
           click a city on the map to fast-travel
         </div>
@@ -87,6 +90,7 @@
       <section>
         <h2>Position</h2>
         <div class="stats">
+          <div class="stat"><span class="k">mode</span><span class="v accent" id="s-mode">on foot</span></div>
           <div class="stat"><span class="k">world</span><span class="v" id="s-pos">—</span></div>
           <div class="stat"><span class="k">nearest</span><span class="v accent" id="s-near">—</span></div>
           <div class="stat"><span class="k">speed</span><span class="v" id="s-speed">0</span></div>
@@ -107,6 +111,7 @@
       </div>
       <canvas id="map" width="256" height="256"></canvas>
       <div class="maphint">click map to travel</div>
+      <div id="prompt"><kbd>E</kbd> get in</div>
       <div class="speedo"><span class="n" id="s-speed2">0</span><div class="u">KM/H</div></div>
     </div>
   </main>
