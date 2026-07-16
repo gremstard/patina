@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Patina — Drive</title>
+<style>
+  :root {
+    --ground: #0b0e10; --ground-2: #0e1315; --panel: #141a1d; --panel-2: #101619;
+    --ink: #c8d0cb; --ink-dim: #7d8a84; --ink-faint: #4a5551;
+    --rust: #d0703c; --rust-bright: #e89a5a; --line: #232c30;
+    --mono: ui-monospace, "DejaVu Sans Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 14px; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  #app { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+
+  header { display: flex; align-items: baseline; gap: 18px; padding: 12px 20px 10px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, var(--ground-2), var(--ground)); flex-wrap: wrap; }
+  .wordmark { font-size: 26px; font-weight: 700; letter-spacing: 0.4em; margin: 0; padding-left: 0.4em; background: linear-gradient(100deg, var(--rust-bright), var(--rust) 40%, #8593a0); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .crumb { color: var(--ink-faint); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .crumb b { color: var(--rust); }
+  .seedbar { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .seedbar label { font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); }
+  input[type="number"], select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font-family: var(--mono); font-size: 13px; padding: 5px 8px; border-radius: 2px; }
+  input[type="number"] { width: 100px; font-variant-numeric: tabular-nums; }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
+  button { background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 10px; border-radius: 2px; cursor: pointer; transition: border-color .12s, color .12s; }
+  button:hover { border-color: var(--rust); color: var(--rust-bright); }
+  button.on { border-color: var(--rust); color: var(--rust-bright); background: rgba(208,112,60,0.08); }
+
+  main { display: grid; grid-template-columns: 190px 1fr; min-height: 0; }
+  .rail { border-right: 1px solid var(--line); background: var(--panel-2); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+  .rail h2 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 9px; font-weight: 600; }
+  .tiers { display: flex; gap: 6px; }
+  .tiers button { flex: 1; }
+  .stats { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .stat { display: flex; justify-content: space-between; }
+  .stat .k { color: var(--ink-faint); }
+  .stat .v { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .stat .v.accent { color: var(--rust-bright); }
+  .keys { font-size: 11px; color: var(--ink-dim); line-height: 1.9; }
+  .keys kbd { font-family: var(--mono); font-size: 10.5px; color: var(--rust-bright); border: 1px solid var(--line); border-radius: 2px; padding: 1px 5px; background: var(--panel); }
+
+  .viewport { position: relative; overflow: hidden; background: #05070a; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  /* Speedometer HUD over the viewport */
+  .speedo { position: absolute; right: 18px; bottom: 16px; text-align: right; pointer-events: none; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  .speedo .n { font-size: 52px; font-weight: 700; line-height: 0.9; font-variant-numeric: tabular-nums; color: var(--rust-bright); }
+  .speedo .u { font-size: 12px; letter-spacing: 0.3em; color: var(--ink-dim); }
+  .slip { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); font-size: 13px; letter-spacing: 0.3em; pointer-events: none; }
+  .fog-note { position: absolute; left: 14px; bottom: 12px; font-size: 10px; letter-spacing: 0.08em; color: var(--ink-dim); background: rgba(10,14,16,0.5); border: 1px solid var(--line); padding: 4px 8px; border-radius: 2px; pointer-events: none; }
+
+  footer { display: flex; align-items: center; gap: 16px; padding: 7px 20px; border-top: 1px solid var(--line); background: var(--ground-2); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint); flex-wrap: wrap; }
+  footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
+  footer .spacer { margin-left: auto; }
+
+  @media (max-width: 820px) {
+    body { overflow: auto; } #app { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .rail { border-right: none; border-bottom: 1px solid var(--line); }
+    .viewport { height: 66vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 class="wordmark">PATINA</h1>
+    <span class="crumb">Phase 4 · <b>Driving</b></span>
+    <div class="seedbar">
+      <select id="palette" aria-label="Culture palette"></select>
+      <label for="seed">Seed</label>
+      <input id="seed" type="number" min="0" step="1" value="1997" />
+      <button id="reroll">Re-roll</button>
+      <button id="respawn">Respawn</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="rail">
+      <section>
+        <h2>Tier</h2>
+        <div class="tiers">
+          <button id="t-metro">Metro</button>
+          <button id="t-city" class="on">City</button>
+          <button id="t-town">Town</button>
+        </div>
+      </section>
+      <section>
+        <h2>Controls</h2>
+        <div class="keys">
+          <kbd>W</kbd> / <kbd>↑</kbd> throttle<br />
+          <kbd>S</kbd> / <kbd>↓</kbd> brake · reverse<br />
+          <kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> steer<br />
+          <kbd>Space</kbd> handbrake · drift<br />
+          <kbd>R</kbd> respawn
+        </div>
+      </section>
+      <section>
+        <h2>Telemetry</h2>
+        <div class="stats">
+          <div class="stat"><span class="k">tier</span><span class="v" id="s-tier">—</span></div>
+          <div class="stat"><span class="k">buildings</span><span class="v" id="s-bldg">—</span></div>
+          <div class="stat"><span class="k">draw calls</span><span class="v accent" id="s-calls">—</span></div>
+          <div class="stat"><span class="k">gen time</span><span class="v" id="s-gen">—</span></div>
+        </div>
+      </section>
+      <section>
+        <h2>Sim · §12</h2>
+        <div class="keys">fixed 60&nbsp;Hz · input-driven<br />render interpolated<br />100&nbsp;m fog · §3</div>
+      </section>
+    </aside>
+
+    <div class="viewport">
+      <canvas id="view"></canvas>
+      <div class="slip"><span id="s-slip">·</span></div>
+      <div class="speedo"><span class="n" id="s-speed">0</span><div class="u">KM/H</div></div>
+      <div class="fog-note">100 m fog — you never see more than a postage stamp. that's the point.</div>
+    </div>
+  </main>
+
+  <footer>
+    <span class="phase">Phase 4 · Driving</span>
+    <span>fixed timestep · send input not positions · arcade grip/slip · AABB collision</span>
+    <span class="spacer"></span>
+    <span>the constraint is honoured; LAN becomes a feature later</span>
+  </footer>
+</div>
+<script type="module" src="./drive.js"></script>
+</body>
+</html>

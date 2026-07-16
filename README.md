@@ -13,7 +13,7 @@ The full design lives in [`docs/PATINA.md`](docs/PATINA.md) — **the only desig
 document.** Read §1 (the thesis) and §0 (the hard rules) first. Everything in
 `src/` cites the section it implements.
 
-## Status — Phase 3: One city ✅
+## Status — Phase 4: Driving ✅
 
 The roadmap (§16) gates each phase on the previous one running.
 
@@ -40,25 +40,42 @@ The roadmap (§16) gates each phase on the previous one running.
 | World-map explorer (2D) | — | `web/index.html` · `web/main.js` |
 | **City viewer (3D)** | — | `web/city.html` · `web/city.js` |
 
+**Phase 4 — Driving** (fixed timestep, arcade handling, collision, real fog):
+
+| Piece | Section | File |
+|---|---|---|
+| Vehicle sim (arcade grip/slip) | §12 | `src/sim/vehicle.js` |
+| Collision (grid broadphase, AABB) | §12 | `src/sim/collision.js` |
+| Car mesh (rusted hatchback) | §10 | `src/render/car.js` |
+| **Driving app** (fixed loop, 100 m fog) | §3, §12 | `web/drive.html` · `web/drive.js` |
+
 The generation core (`meshbuilder`, `city`) is **pure and worker-ready** — it
 returns transferable typed arrays with no three.js, so moving it into a Web
 Worker (hard rule 5) later is plumbing, not a rewrite. A whole city merges into
-**one `BufferGeometry` → ~1–2 draw calls** (§10, §11). three.js is the only
-runtime dependency; esbuild bundles the 3D page into one self-contained file.
+**one `BufferGeometry` → ~1–2 draw calls** (§10, §11).
+
+The sim is the load-bearing part of §12: a **fixed 60 Hz timestep** via an
+accumulator, stepped on **input** (`{throttle, steer, brake, handbrake}`) not
+positions, with rendering interpolated on top and **zero allocation in the loop**
+(hard rule 3). It is pure and deterministic — the same inputs replay to the same
+trajectory (pinned in the test), which is exactly what LAN multiplayer will lean
+on later. three.js is the only runtime dependency; esbuild bundles the 3D pages
+into self-contained files.
 
 ## Commands
 
 ```
-npm test                 # determinism + city geometry suite (§5) — 18 checks
+npm test                 # determinism + city + driving suite (§5) — 22 checks
 npm run worldindex       # build the offline world index blob (§4)
 npm run bundle           # build the 2D world-map explorer  → dist/index.html
 npm run bundle:city      # build the 3D city viewer          → dist/city.html
-npm run smoke            # headless render check of the map
-npm run smoke:city       # headless WebGL render check of the city
+npm run bundle:drive     # build the driving game            → dist/drive.html
+npm run smoke:drive      # headless WebGL check (drives forward, asserts motion)
 ```
 
-Open `dist/index.html` (map) or `dist/city.html` (city) in a browser — both are
-self-contained, no server needed.
+Open `dist/index.html` (map), `dist/city.html` (city), or `dist/drive.html`
+(drive) in a browser — all self-contained, no server needed. In the driver:
+**W/↑** throttle, **S/↓** brake·reverse, **A/D** steer, **Space** handbrake, **R** respawn.
 
 ## What the determinism test pins
 

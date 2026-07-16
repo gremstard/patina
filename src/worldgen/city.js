@@ -22,10 +22,12 @@ const PITCH = BLOCK + ROAD; // 72.5 m block-to-block
 const floorsOf = (r, seed) => r.floors[0] + (hash(seed, 'fl') % (r.floors[1] - r.floors[0] + 1));
 
 // Place one building mass with its roof. fw/fd = footprint (already set back).
-function placeBuilding(mb, cx, cz, fw, fd, floors, roofType, palette, seed, maxH) {
+// Records an axis-aligned collider (footprint) for the driving sim.
+function placeBuilding(mb, col, cx, cz, fw, fd, floors, roofType, palette, seed, maxH) {
   const height = floors * FLOOR;
   const wc = shade(wall(palette, hash(seed, 'w')), 0.82 + 0.4 * unit(hash(seed, 'ws')));
   mb.box(cx, height / 2, cz, fw, height, fd, wc);
+  col.push({ x: cx, z: cz, hw: fw / 2, hd: fd / 2 });
   if (roofType === 'gable') {
     // Pitch scales with span but is CAPPED — a wide mass must not sprout a barn
     // roof (a 50 m footprint at 0.4 span = 20 m of ridge). Real wide-span gables
@@ -50,7 +52,7 @@ function placeTree(mb, x, z, seed) {
 // Attached masses — offices, stores, apartments, main-street rows (§7 lots that
 // are NOT detached). Pack the block into a few masses with the zone's setback
 // and roof. Never gabled, so wide spans stay flat/parapet — no barn roofs.
-function massBlock(mb, bx, bz, r, palette, seed, maxH) {
+function massBlock(mb, col, bx, bz, r, palette, seed, maxH) {
   const sb = r.setback;
   const nx = 1 + (hash(seed, 'nx') % 2);
   const nz = 1 + (hash(seed, 'nz') % 2);
@@ -66,7 +68,7 @@ function massBlock(mb, bx, bz, r, palette, seed, maxH) {
       // 0-setback cores share walls (tiny reveal); set-back masses pull in.
       const fw = cw - Math.max(1, 2 * sb) + (sb === 0 ? 0.5 : 0);
       const fd = cd - Math.max(1, 2 * sb) + (sb === 0 ? 0.5 : 0);
-      placeBuilding(mb, cx, cz, fw, fd, floorsOf(r, s), roofType, palette, s, maxH);
+      placeBuilding(mb, col, cx, cz, fw, fd, floorsOf(r, s), roofType, palette, s, maxH);
       n++;
     }
   }
@@ -76,7 +78,7 @@ function massBlock(mb, bx, bz, r, palette, seed, maxH) {
 // Detached houses — the suburb. A sparse lot grid with gabled houses; the gaps
 // ARE the density gradient. `emptyP` thins the edge more than the ring, so a
 // town's ring reads as denser houses than its cul-de-sac edge (§7).
-function houseBlock(mb, bx, bz, zone, r, palette, seed, maxH) {
+function houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
   const grid = 3;
   const lot = BLOCK / grid;
   const sb = Math.min(r.setback, lot * 0.26);
@@ -90,7 +92,7 @@ function houseBlock(mb, bx, bz, zone, r, palette, seed, maxH) {
       const cz = bz - BLOCK / 2 + lot * (b + 0.5);
       const fw = lot - 2 * sb;
       const fd = lot - 2 * sb;
-      placeBuilding(mb, cx, cz, fw, fd, floorsOf(r, s), 'gable', palette, s, maxH);
+      placeBuilding(mb, col, cx, cz, fw, fd, floorsOf(r, s), 'gable', palette, s, maxH);
       if (unit(hash(s, 'tree')) < 0.45) placeTree(mb, cx + lot * 0.32, cz + lot * 0.32, s);
       n++;
     }
@@ -101,10 +103,10 @@ function houseBlock(mb, bx, bz, zone, r, palette, seed, maxH) {
 // §7: the branch is `detached`, the doc's own flag — not the zone name. Town
 // rings are detached houses; metro cores are attached towers. This is what
 // keeps a cul-de-sac and six floors from ever meeting.
-function buildBlock(mb, bx, bz, zone, r, palette, seed, maxH) {
+function buildBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
   return r.detached
-    ? houseBlock(mb, bx, bz, zone, r, palette, seed, maxH)
-    : massBlock(mb, bx, bz, r, palette, seed, maxH);
+    ? houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH)
+    : massBlock(mb, col, bx, bz, r, palette, seed, maxH);
 }
 
 // Generate a whole city centred on local (0,0). `paletteKey` binds to naming
@@ -120,6 +122,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
   mb.plane(0, 0, span, span, -0.06, SURFACE.ground);
 
   const N = Math.ceil(R / PITCH) + 1;
+  const colliders = []; // building footprints (city space) for the driving sim
   let blocks = 0;
   let buildings = 0;
   const zones = { core: 0, ring: 0, edge: 0 };
@@ -142,7 +145,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       mb.plane(bx, bz, PITCH, PITCH, -0.02, SURFACE.asphalt);
       mb.plane(bx, bz, BLOCK, BLOCK, 0.02, SURFACE.sidewalk);
 
-      buildings += buildBlock(mb, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
+      buildings += buildBlock(mb, colliders, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
     }
   }
 
@@ -157,6 +160,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
     normals: geo.normals,
     colors: geo.colors,
     indices: geo.indices,
+    colliders,
     stats: { blocks, buildings, zones, triangles: geo.triangles, vertices: geo.vertices },
   };
 }

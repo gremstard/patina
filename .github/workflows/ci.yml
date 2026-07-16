@@ -17,6 +17,7 @@ jobs:
       # The determinism test (§5) is the guard that the world can't silently
       # drift. It must pass on every push.
       - run: node --test
-      # Both bundles must build cleanly (the city bundle needs esbuild + three).
+      # All bundles must build cleanly (the 3D ones need esbuild + three).
       - run: node scripts/bundle-web.js
-      - run: node scripts/bundle-city.js
+      - run: node scripts/bundle-app.js city
+      - run: node scripts/bundle-app.js drive
