@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.vite/
+
+# Generated world-index blobs (§4). Regenerable via `npm run worldindex`; the
+# determinism test (§5) guards their content by digest, so they are never
+# committed — a checked-in generated artifact only invites silent drift.
+data/*.json

@@ -1,0 +1,14 @@
+{
+  "name": "patina",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An open-world PSX-style driving/crime game. Bounded procedural world, built from primitives.",
+  "scripts": {
+    "test": "node --test",
+    "worldindex": "node scripts/build-world-index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
