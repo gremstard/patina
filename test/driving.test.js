@@ -24,13 +24,19 @@ function scriptedInput(step) {
   return { steer: 0 };
 }
 
+// Two circles (front + rear) model the car's length — mirrors the app.
+function resolveCar(car, grid) {
+  resolveCollision(car, grid, 0.95, 1.4);
+  resolveCollision(car, grid, 0.95, -1.4);
+}
+
 function runScript(withCollision) {
   const car = createCar(36, 0, 0);
   let grid = null;
   if (withCollision) grid = buildColliderGrid(generateCity(1997, 'city', 'redbrick').colliders);
   for (let s = 0; s < 360; s++) {
     stepCar(car, scriptedInput(s), DT);
-    if (grid) resolveCollision(car, grid, 2.0);
+    if (grid) resolveCar(car, grid);
   }
   return car;
 }
@@ -42,7 +48,7 @@ function stateDigest(o) {
 }
 
 const PINNED_FREE = '8dfecad2';
-const PINNED_CITY = 'c3d1cc28';
+const PINNED_CITY = 'a98146cc';
 
 test('vehicle sim is deterministic and matches the pinned free-run trajectory', () => {
   assert.equal(stateDigest(runScript(false)), stateDigest(runScript(false)));
@@ -85,9 +91,10 @@ test('a car cannot drive through a building', () => {
   const car = createCar(0, 0, 0); // faces +z, wall near face at z=12
   for (let s = 0; s < 600; s++) {
     stepCar(car, { throttle: true }, DT);
-    resolveCollision(car, grid, 2.0);
+    resolveCar(car, grid);
   }
-  assert.ok(car.z < 12 - 2 + 0.5, `car penetrated the wall: z=${car.z.toFixed(2)}`);
+  // front circle (off +1.4, r 0.95) stops at z≈12-0.95 → car centre ≈ 9.65
+  assert.ok(car.z < 10.6, `car penetrated the wall: z=${car.z.toFixed(2)}`);
   assert.ok(car.z > 8, `car ended up somewhere impossible: z=${car.z.toFixed(2)}`);
 });
 

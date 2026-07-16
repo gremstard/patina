@@ -41,6 +41,13 @@ export function makeCityMaterial() {
   return mat;
 }
 
+// Flat ground / roads. Same lambert + fog look, but NO vertex snapping — a large
+// flat quad warps badly when its corners snap to the pixel grid (§3), and flat
+// ground has no LOD popping for snapping to hide anyway.
+export function makeGroundMaterial() {
+  return new MeshLambertMaterial({ vertexColors: true, fog: true });
+}
+
 const POST_VERT = /* glsl */ `
   varying vec2 vUv;
   void main() {

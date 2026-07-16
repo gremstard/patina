@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { generateCity } from '../src/worldgen/city.js';
 import { buildCar } from '../src/render/car.js';
 import { buildPed } from '../src/render/ped.js';
-import { makeCityMaterial, PSXPass } from '../src/render/psx.js';
+import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx.js';
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
 import { buildColliderGrid, resolveCollision, nearestParked, addCollider } from '../src/sim/collision.js';
@@ -35,10 +35,12 @@ scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xacc0d6, 0x3a352c, 0.95));
 scene.add(new THREE.AmbientLight(0xffffff, 0.26));
 
-const mat = makeCityMaterial(); // shared by city, car, ped, parked instances
+const mat = makeCityMaterial(); // structures, car, ped, parked instances (snapped)
+const groundMat = makeGroundMaterial(); // flat ground / roads (not snapped)
 
 // static meshes rebuilt per city
 let cityMesh = null;
+let groundMesh = null;
 let parkedInst = null;
 let grid = null;
 let parking = null;
@@ -96,6 +98,10 @@ function rebuild() {
   if (cityMesh) { cityMesh.geometry.dispose(); scene.remove(cityMesh); }
   cityMesh = new THREE.Mesh(bufGeo(city), mat);
   scene.add(cityMesh);
+
+  if (groundMesh) { groundMesh.geometry.dispose(); scene.remove(groundMesh); }
+  groundMesh = new THREE.Mesh(bufGeo(city.ground), groundMat);
+  scene.add(groundMesh);
 
   // parked cars: colliders + one instanced mesh
   parking = city.parking;
@@ -258,10 +264,13 @@ function frame(now) {
     readInput();
     if (mode === 'foot') {
       stepPed(ped, input, DT);
-      resolveCollision(ped, grid, 0.7);
+      resolveCollision(ped, grid, 0.5);
     } else {
       stepCar(car, input, DT);
-      resolveCollision(car, grid, 2.0);
+      // two circles (front + rear) approximate the car's shape far better than
+      // one oversized circle — no more stopping "in mid-air"
+      resolveCollision(car, grid, 0.95, 1.4);
+      resolveCollision(car, grid, 0.95, -1.4);
     }
     acc -= DT;
   }

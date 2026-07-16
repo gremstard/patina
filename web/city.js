@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { generateCity, cityDigest } from '../src/worldgen/city.js';
-import { makeCityMaterial, PSXPass } from '../src/render/psx.js';
+import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx.js';
 import { CITY_R } from '../src/core/constants.js';
 import { CULTURES } from '../src/worldgen/names.js';
 
@@ -49,7 +49,9 @@ scene.add(new THREE.HemisphereLight(0xbcd0e6, 0x3a352c, 1.0)); // sky / ground f
 scene.add(new THREE.AmbientLight(0xffffff, 0.22)); // lift the shadowed faces
 
 const material = makeCityMaterial();
+const groundMaterial = makeGroundMaterial();
 let cityMesh = null;
+let groundMesh = null;
 
 // ── Orbit camera (small, no dependency) ──────────────────────────────────────
 const camera = new THREE.PerspectiveCamera(56, 1, 0.5, 8000);
@@ -77,14 +79,21 @@ function rebuild() {
   if (cityMesh) {
     cityMesh.geometry.dispose();
     scene.remove(cityMesh);
+    groundMesh.geometry.dispose();
+    scene.remove(groundMesh);
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(city.positions, 3));
-  g.setAttribute('normal', new THREE.BufferAttribute(city.normals, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(city.colors, 3));
-  g.setIndex(new THREE.BufferAttribute(city.indices, 1));
-  cityMesh = new THREE.Mesh(g, material);
+  const mkGeo = (d) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(d.positions, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(d.normals, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(d.colors, 3));
+    g.setIndex(new THREE.BufferAttribute(d.indices, 1));
+    return g;
+  };
+  cityMesh = new THREE.Mesh(mkGeo(city), material);
   scene.add(cityMesh);
+  groundMesh = new THREE.Mesh(mkGeo(city.ground), groundMaterial);
+  scene.add(groundMesh);
 
   // frame the camera to the city — a lower, closer angle so the skyline reads
   orbit.rad = city.radius * 1.55;

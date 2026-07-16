@@ -58,14 +58,25 @@ export function addCollider(cg, c) {
   }
 }
 
-// Resolve the car circle against nearby building AABBs. Pushes the car out of
-// penetration and cancels the velocity component into the wall (a scrape, not a
-// bounce — arcade). Mutates car.{x,z,vx,vz}; returns the number of contacts (for
-// crunch/audio feedback later). Allocation-free.
-export function resolveCollision(car, cg, radius = 2.0) {
+// Resolve a body circle against nearby building/parked-car AABBs. Pushes the body
+// out of penetration and cancels the velocity component into the wall (a scrape,
+// not a bounce — arcade). Mutates body.{x,z,vx,vz}; returns the contact count.
+//
+// `off` samples the circle at a point `off` metres ALONG the body's heading, so
+// an elongated car can be covered by two smaller circles (front + rear) instead
+// of one oversized one — which is why you were stopping "in mid-air". The
+// correction still moves the body centre. Allocation-free.
+export function resolveCollision(body, cg, radius = 1.0, off = 0) {
   const { grid, cell } = cg;
-  const ci = Math.floor(car.x / cell);
-  const cj = Math.floor(car.z / cell);
+  let px = body.x;
+  let pz = body.z;
+  if (off) {
+    px += Math.sin(body.yaw) * off;
+    pz += Math.cos(body.yaw) * off;
+  }
+  const ci = Math.floor(px / cell);
+  const cj = Math.floor(pz / cell);
+  const r2 = radius * radius;
   let contacts = 0;
   for (let i = ci - 1; i <= ci + 1; i++) {
     for (let j = cj - 1; j <= cj + 1; j++) {
@@ -74,12 +85,12 @@ export function resolveCollision(car, cg, radius = 2.0) {
       for (let n = 0; n < arr.length; n++) {
         const b = arr[n];
         if (b.taken) continue; // a parked car you've driven off in no longer blocks
-        const nx = clamp(car.x, b.x - b.hw, b.x + b.hw);
-        const nz = clamp(car.z, b.z - b.hd, b.z + b.hd);
-        const dx = car.x - nx;
-        const dz = car.z - nz;
+        const nx = clamp(px, b.x - b.hw, b.x + b.hw);
+        const nz = clamp(pz, b.z - b.hd, b.z + b.hd);
+        const dx = px - nx;
+        const dz = pz - nz;
         const d2 = dx * dx + dz * dz;
-        if (d2 >= radius * radius) continue;
+        if (d2 >= r2) continue;
 
         contacts++;
         if (d2 > 1e-8) {
@@ -88,23 +99,29 @@ export function resolveCollision(car, cg, radius = 2.0) {
           const push = radius - d;
           const nX = dx * inv;
           const nZ = dz * inv;
-          car.x += nX * push;
-          car.z += nZ * push;
-          const vn = car.vx * nX + car.vz * nZ;
+          body.x += nX * push;
+          body.z += nZ * push;
+          px += nX * push;
+          pz += nZ * push;
+          const vn = body.vx * nX + body.vz * nZ;
           if (vn < 0) {
-            car.vx -= vn * nX;
-            car.vz -= vn * nZ;
+            body.vx -= vn * nX;
+            body.vz -= vn * nZ;
           }
         } else {
           // dead centre on an edge — shove out along the smaller overlap axis
-          const ox = b.hw + radius - Math.abs(car.x - b.x);
-          const oz = b.hd + radius - Math.abs(car.z - b.z);
+          const ox = b.hw + radius - Math.abs(px - b.x);
+          const oz = b.hd + radius - Math.abs(pz - b.z);
           if (ox < oz) {
-            car.x += car.x < b.x ? -ox : ox;
-            car.vx = 0;
+            const s = px < b.x ? -ox : ox;
+            body.x += s;
+            px += s;
+            body.vx = 0;
           } else {
-            car.z += car.z < b.z ? -oz : oz;
-            car.vz = 0;
+            const s = pz < b.z ? -oz : oz;
+            body.z += s;
+            pz += s;
+            body.vz = 0;
           }
         }
       }

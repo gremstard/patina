@@ -141,12 +141,14 @@ function buildBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
 export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete') {
   citySeed = citySeed >>> 0;
   const R = CITY_R[tier];
-  const mb = new MeshBuilder();
+  const mb = new MeshBuilder(); // structures — buildings, roofs, trees (snapped)
+  const gb = new MeshBuilder(); // ground — scrub, roads, kerbs (NOT snapped: a
+  //           huge flat quad warps badly under the vertex-snap shader, §3)
   const maxH = { v: 0 };
 
   // scrub ground under the whole thing
   const span = (R + PITCH) * 2.4;
-  mb.plane(0, 0, span, span, -0.06, SURFACE.ground);
+  gb.plane(0, 0, span, span, -0.06, SURFACE.ground);
 
   const N = Math.ceil(R / PITCH) + 1;
   const colliders = []; // building footprints (city space) for the driving sim
@@ -170,8 +172,8 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       blocks++;
 
       // asphalt tile (block + its share of the streets) then the sidewalk pad
-      mb.plane(bx, bz, PITCH, PITCH, -0.02, SURFACE.asphalt);
-      mb.plane(bx, bz, BLOCK, BLOCK, 0.02, SURFACE.sidewalk);
+      gb.plane(bx, bz, PITCH, PITCH, -0.02, SURFACE.asphalt);
+      gb.plane(bx, bz, BLOCK, BLOCK, 0.02, SURFACE.sidewalk);
 
       buildings += buildBlock(mb, colliders, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
       placeParking(park, bx, bz, blockSeed);
@@ -179,19 +181,32 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
   }
 
   const geo = mb.build();
+  const gnd = gb.build();
   return {
     seed: citySeed,
     tier,
     palette: paletteKey,
     radius: R,
     maxHeight: maxH.v,
+    // structures (snapped)
     positions: geo.positions,
     normals: geo.normals,
     colors: geo.colors,
     indices: geo.indices,
+    // ground (flat, not snapped)
+    ground: {
+      positions: gnd.positions,
+      normals: gnd.normals,
+      colors: gnd.colors,
+      indices: gnd.indices,
+    },
     colliders,
     parking: park,
-    stats: { blocks, buildings, zones, parked: park.length, triangles: geo.triangles, vertices: geo.vertices },
+    stats: {
+      blocks, buildings, zones, parked: park.length,
+      triangles: geo.triangles + gnd.triangles,
+      vertices: geo.vertices + gnd.vertices,
+    },
   };
 }
 
@@ -201,11 +216,14 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
 export function cityDigest(city) {
   let h = 2166136261 >>> 0;
   h = hash(h, city.seed, city.stats.vertices, city.stats.triangles, city.stats.blocks, city.stats.buildings);
-  const p = city.positions;
-  // sample every 7th component, quantized to mm, so the digest is robust to
-  // harmless float noise but catches any real geometry change.
-  for (let i = 0; i < p.length; i += 7) h = hash(h, Math.round(p[i] * 1000));
-  const c = city.colors;
-  for (let i = 0; i < c.length; i += 13) h = hash(h, Math.round(c[i] * 255));
+  // sample every 7th position component (mm) + every 13th colour (byte), across
+  // both structures and ground, so the digest is robust to harmless float noise
+  // but catches any real geometry change.
+  for (const g of [city, city.ground]) {
+    const p = g.positions;
+    for (let i = 0; i < p.length; i += 7) h = hash(h, Math.round(p[i] * 1000));
+    const c = g.colors;
+    for (let i = 0; i < c.length; i += 13) h = hash(h, Math.round(c[i] * 255));
+  }
   return (h >>> 0).toString(16).padStart(8, '0');
 }
