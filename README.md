@@ -13,7 +13,7 @@ The full design lives in [`docs/PATINA.md`](docs/PATINA.md) — **the only desig
 document.** Read §1 (the thesis) and §0 (the hard rules) first. Everything in
 `src/` cites the section it implements.
 
-## Status — Phase 4: Driving ✅
+## Status — Phase 5: On foot & driving ✅
 
 The roadmap (§16) gates each phase on the previous one running.
 
@@ -40,14 +40,21 @@ The roadmap (§16) gates each phase on the previous one running.
 | World-map explorer (2D) | — | `web/index.html` · `web/main.js` |
 | **City viewer (3D)** | — | `web/city.html` · `web/city.js` |
 
-**Phase 4 — Driving** (fixed timestep, arcade handling, collision, real fog):
+**Phase 4/5 — On foot & driving** (fixed timestep, collision, real fog, get in/out of cars):
 
 | Piece | Section | File |
 |---|---|---|
-| Vehicle sim (arcade grip/slip) | §12 | `src/sim/vehicle.js` |
+| Vehicle sim (simple on-rails handling) | §12 | `src/sim/vehicle.js` |
+| Pedestrian sim (tank walk) | §12 | `src/sim/pedestrian.js` |
 | Collision (grid broadphase, AABB) | §12 | `src/sim/collision.js` |
-| Car mesh (rusted hatchback) | §10 | `src/render/car.js` |
-| **Driving app** (fixed loop, 100 m fog) | §3, §12 | `web/drive.html` · `web/drive.js` |
+| Car + person meshes | §10, §14 | `src/render/car.js` · `src/render/ped.js` |
+| Parked cars along the kerbs | §6 | `src/worldgen/city.js` |
+| **Play app** (walk → enter car → drive) | §3, §12 | `web/play.html` · `web/play.js` |
+
+Walk the streets, find a parked car, press **E** to get in, drive it, press **E**
+to get out. Parked cars are one **InstancedMesh** (a single draw call for
+thousands). Driving is deliberately simple — W/S move along the path, steering
+*curves* the path, no lateral slip.
 
 The generation core (`meshbuilder`, `city`) is **pure and worker-ready** — it
 returns transferable typed arrays with no three.js, so moving it into a Web
@@ -65,17 +72,17 @@ into self-contained files.
 ## Commands
 
 ```
-npm test                 # determinism + city + driving suite (§5) — 22 checks
+npm test                 # determinism + city + driving/walking suite (§5) — 24 checks
 npm run worldindex       # build the offline world index blob (§4)
 npm run bundle           # build the 2D world-map explorer  → dist/index.html
 npm run bundle:city      # build the 3D city viewer          → dist/city.html
-npm run bundle:drive     # build the driving game            → dist/drive.html
-npm run smoke:drive      # headless WebGL check (drives forward, asserts motion)
+npm run bundle:play      # build the on-foot + driving game  → dist/play.html
+npm run smoke:play       # headless WebGL check (gets in a car, asserts it moves)
 ```
 
-Open `dist/index.html` (map), `dist/city.html` (city), or `dist/drive.html`
-(drive) in a browser — all self-contained, no server needed. In the driver:
-**W/↑** throttle, **S/↓** brake·reverse, **A/D** steer, **Space** handbrake, **R** respawn.
+Open `dist/index.html` (map), `dist/city.html` (city), or `dist/play.html`
+(play) in a browser — all self-contained, no server needed. In `play`:
+**W/S** walk·drive, **A/D** turn·steer, **Shift** run, **E** get in / out of a car, **R** new spawn.
 
 ## What the determinism test pins
 

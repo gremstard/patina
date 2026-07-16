@@ -39,6 +39,25 @@ export function buildColliderGrid(colliders) {
   return { grid, cell: CELL };
 }
 
+// Bucket a single collider into the grid (used when a driven car is parked again
+// at a new spot). Leaves any stale references in old cells harmless — they read
+// the collider's current coords, so they just stop matching there.
+export function addCollider(cg, c) {
+  const { grid, cell } = cg;
+  const i0 = Math.floor((c.x - c.hw) / cell);
+  const i1 = Math.floor((c.x + c.hw) / cell);
+  const j0 = Math.floor((c.z - c.hd) / cell);
+  const j1 = Math.floor((c.z + c.hd) / cell);
+  for (let i = i0; i <= i1; i++) {
+    for (let j = j0; j <= j1; j++) {
+      const k = key(i, j);
+      let arr = grid.get(k);
+      if (!arr) grid.set(k, (arr = []));
+      arr.push(c);
+    }
+  }
+}
+
 // Resolve the car circle against nearby building AABBs. Pushes the car out of
 // penetration and cancels the velocity component into the wall (a scrape, not a
 // bounce — arcade). Mutates car.{x,z,vx,vz}; returns the number of contacts (for
@@ -54,6 +73,7 @@ export function resolveCollision(car, cg, radius = 2.0) {
       if (!arr) continue;
       for (let n = 0; n < arr.length; n++) {
         const b = arr[n];
+        if (b.taken) continue; // a parked car you've driven off in no longer blocks
         const nx = clamp(car.x, b.x - b.hw, b.x + b.hw);
         const nz = clamp(car.z, b.z - b.hd, b.z + b.hd);
         const dx = car.x - nx;
@@ -91,4 +111,34 @@ export function resolveCollision(car, cg, radius = 2.0) {
     }
   }
   return contacts;
+}
+
+// Find the nearest enterable parked car to (x,z) within `radius`, using the same
+// grid. Colliders that carry an `id` (>= 0) are parked cars; buildings don't.
+// Returns the collider (with .id) or null. Allocation-free.
+export function nearestParked(cg, x, z, radius) {
+  const { grid, cell } = cg;
+  const ci = Math.floor(x / cell);
+  const cj = Math.floor(z / cell);
+  const r2 = radius * radius;
+  let best = null;
+  let bestD = r2;
+  for (let i = ci - 1; i <= ci + 1; i++) {
+    for (let j = cj - 1; j <= cj + 1; j++) {
+      const arr = grid.get(key(i, j));
+      if (!arr) continue;
+      for (let n = 0; n < arr.length; n++) {
+        const c = arr[n];
+        if (c.id === undefined || c.taken) continue;
+        const dx = c.x - x;
+        const dz = c.z - z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD) {
+          bestD = d2;
+          best = c;
+        }
+      }
+    }
+  }
+  return best;
 }

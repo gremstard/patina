@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Patina — Drive</title>
+<title>Patina — Play</title>
 <style>
   :root {
     --ground: #0b0e10; --ground-2: #0e1315; --panel: #141a1d; --panel-2: #101619;
@@ -29,7 +29,7 @@
   button:hover { border-color: var(--rust); color: var(--rust-bright); }
   button.on { border-color: var(--rust); color: var(--rust-bright); background: rgba(208,112,60,0.08); }
 
-  main { display: grid; grid-template-columns: 190px 1fr; min-height: 0; }
+  main { display: grid; grid-template-columns: 196px 1fr; min-height: 0; }
   .rail { border-right: 1px solid var(--line); background: var(--panel-2); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
   .rail h2 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 9px; font-weight: 600; }
   .tiers { display: flex; gap: 6px; }
@@ -38,18 +38,20 @@
   .stat { display: flex; justify-content: space-between; }
   .stat .k { color: var(--ink-faint); }
   .stat .v { color: var(--ink); font-variant-numeric: tabular-nums; }
-  .stat .v.accent { color: var(--rust-bright); }
+  .stat .v.accent { color: var(--rust-bright); text-transform: uppercase; }
   .keys { font-size: 11px; color: var(--ink-dim); line-height: 1.9; }
   .keys kbd { font-family: var(--mono); font-size: 10.5px; color: var(--rust-bright); border: 1px solid var(--line); border-radius: 2px; padding: 1px 5px; background: var(--panel); }
+  .keys .enter kbd { color: var(--ground); background: var(--rust-bright); border-color: var(--rust-bright); }
 
   .viewport { position: relative; overflow: hidden; background: #05070a; }
   #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  /* Speedometer HUD over the viewport */
   .speedo { position: absolute; right: 18px; bottom: 16px; text-align: right; pointer-events: none; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
-  .speedo .n { font-size: 52px; font-weight: 700; line-height: 0.9; font-variant-numeric: tabular-nums; color: var(--rust-bright); }
+  .speedo .n { font-size: 50px; font-weight: 700; line-height: 0.9; font-variant-numeric: tabular-nums; color: var(--rust-bright); }
   .speedo .u { font-size: 12px; letter-spacing: 0.3em; color: var(--ink-dim); }
-  .slip { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); font-size: 13px; letter-spacing: 0.3em; pointer-events: none; }
+  #prompt { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); pointer-events: none; opacity: 0; transition: opacity .12s; background: rgba(10,14,16,0.88); border: 1px solid var(--rust); border-radius: 3px; padding: 8px 14px; font-size: 13px; letter-spacing: 0.04em; text-shadow: none; }
+  #prompt kbd { font-family: var(--mono); color: var(--ground); background: var(--rust-bright); border-radius: 2px; padding: 1px 7px; margin-right: 4px; font-weight: 700; }
   .fog-note { position: absolute; left: 14px; bottom: 12px; font-size: 10px; letter-spacing: 0.08em; color: var(--ink-dim); background: rgba(10,14,16,0.5); border: 1px solid var(--line); padding: 4px 8px; border-radius: 2px; pointer-events: none; }
+  .mode-badge { position: absolute; left: 14px; top: 14px; font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--rust-bright); background: rgba(10,14,16,0.6); border: 1px solid var(--line); padding: 4px 10px; border-radius: 2px; pointer-events: none; }
 
   footer { display: flex; align-items: center; gap: 16px; padding: 7px 20px; border-top: 1px solid var(--line); background: var(--ground-2); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint); flex-wrap: wrap; }
   footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
@@ -68,13 +70,12 @@
 <div id="app">
   <header>
     <h1 class="wordmark">PATINA</h1>
-    <span class="crumb">Phase 4 · <b>Driving</b></span>
+    <span class="crumb">Phase 5 · <b>On foot &amp; driving</b></span>
     <div class="seedbar">
       <select id="palette" aria-label="Culture palette"></select>
       <label for="seed">Seed</label>
       <input id="seed" type="number" min="0" step="1" value="1997" />
       <button id="reroll">Re-roll</button>
-      <button id="respawn">Respawn</button>
     </div>
   </header>
 
@@ -91,43 +92,41 @@
       <section>
         <h2>Controls</h2>
         <div class="keys">
-          <kbd>W</kbd> / <kbd>↑</kbd> throttle<br />
-          <kbd>S</kbd> / <kbd>↓</kbd> brake · reverse<br />
-          <kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> steer<br />
-          <kbd>Space</kbd> handbrake · drift<br />
-          <kbd>R</kbd> respawn
+          <kbd>W</kbd><kbd>S</kbd> walk · drive<br />
+          <kbd>A</kbd><kbd>D</kbd> turn · steer<br />
+          <kbd>Shift</kbd> run (on foot)<br />
+          <span class="enter"><kbd>E</kbd> get in / out of a car</span><br />
+          <kbd>R</kbd> new spawn
         </div>
       </section>
       <section>
         <h2>Telemetry</h2>
         <div class="stats">
+          <div class="stat"><span class="k">mode</span><span class="v accent" id="s-mode">on foot</span></div>
           <div class="stat"><span class="k">tier</span><span class="v" id="s-tier">—</span></div>
-          <div class="stat"><span class="k">buildings</span><span class="v" id="s-bldg">—</span></div>
+          <div class="stat"><span class="k">parked cars</span><span class="v" id="s-parked">—</span></div>
           <div class="stat"><span class="k">draw calls</span><span class="v accent" id="s-calls">—</span></div>
           <div class="stat"><span class="k">gen time</span><span class="v" id="s-gen">—</span></div>
         </div>
-      </section>
-      <section>
-        <h2>Sim · §12</h2>
-        <div class="keys">fixed 60&nbsp;Hz · input-driven<br />render interpolated<br />100&nbsp;m fog · §3</div>
       </section>
     </aside>
 
     <div class="viewport">
       <canvas id="view"></canvas>
-      <div class="slip"><span id="s-slip">·</span></div>
+      <div class="mode-badge" id="s-mode-badge"></div>
+      <div id="prompt"><kbd>E</kbd> get in</div>
       <div class="speedo"><span class="n" id="s-speed">0</span><div class="u">KM/H</div></div>
-      <div class="fog-note">100 m fog — you never see more than a postage stamp. that's the point.</div>
+      <div class="fog-note">walk the streets · find a car · get in · drive · 100 m fog</div>
     </div>
   </main>
 
   <footer>
-    <span class="phase">Phase 4 · Driving</span>
-    <span>fixed timestep · send input not positions · arcade grip/slip · AABB collision</span>
+    <span class="phase">Phase 5 · On foot &amp; driving</span>
+    <span>tank walk + on-rails car · one fixed-timestep loop · parked cars = 1 instanced draw call</span>
     <span class="spacer"></span>
-    <span>the constraint is honoured; LAN becomes a feature later</span>
+    <span>get in, get out, get chased (soon)</span>
   </footer>
 </div>
-<script type="module" src="./drive.js"></script>
+<script type="module" src="./play.js"></script>
 </body>
 </html>

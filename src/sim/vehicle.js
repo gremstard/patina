@@ -1,53 +1,32 @@
-// §12 — The vehicle, as a pure deterministic sim.
+// §12 — The vehicle, as a pure deterministic sim. SIMPLE on-rails handling:
+// W/S move along the car's path, steering CURVES the path (no sideways slip, no
+// drift). The velocity is always exactly along the heading — turning redirects
+// it instantly. This is the "change the path, don't push the car sideways" feel.
 //
-// "GTA's handling was never rigid-body sim. Custom is simpler, deterministic by
-//  construction, and one less dependency." This file has no three.js and no DOM:
-//  it is stepped at a FIXED DT by an accumulator (§12), takes INPUT not positions
-//  ({throttle, steer, brake, handbrake} — the multiplayer shape), and mutates the
-//  car in place (hard rule 3: zero allocation in the step).
+// No three.js, no DOM. Stepped at a FIXED DT by an accumulator (§12), on INPUT
+// {throttle, steer, brake} not positions (the multiplayer shape). Mutates in
+// place (hard rule 3). No global RNG.
 //
-// Coordinates are the render-local frame (§8): small numbers near the origin.
-// The car's true city position is (local + origin); the driver applies the
-// floating-origin rebase after stepping.
-//
-// Model: a grip/slip arcade car. Velocity lives in world axes; each step it is
-// split into forward/lateral, the engine and brakes act along forward, tyre grip
-// eats lateral speed (handbrake loosens it → slides), and steering turns the
-// heading at a speed-scaled rate. No global RNG.
+// Coordinates are the render-local frame (§8). Velocity is kept as (vx,vz) so the
+// collision resolver can cancel the into-wall component; each step re-derives
+// forward speed from it (any lateral part a collision introduced is dropped —
+// that is what keeps the car on rails).
 
-// Handling constants. Tuned so top speed ≈ 33 m/s (~120 km/h), 0–100 km/h in a
-// few seconds, and a sane turning circle. All SI-ish (metres, seconds).
 export const CAR = {
-  ENGINE: 11.0, // forward accel under throttle (m/s^2)
-  BRAKE: 20.0, // decel under brake while moving forward
-  REVERSE: 6.0, // accel backwards once stopped
-  ROLL: 2.6, // linear rolling resistance (m/s^2)
-  DRAG: 0.0075, // quadratic air drag (per (m/s)^2) → sets top speed
-  MAX_STEER: 0.55, // rad at full lock, low speed
-  STEER_SPEED: 3.2, // rad/s the steering input approaches its target
-  WHEELBASE: 3.1, // m — bicycle-model turn geometry
-  GRIP: 7.5, // lateral grip (1/s); higher = less slide
-  HANDBRAKE_GRIP: 1.4, // loosened rear grip under handbrake
-  MASS_EASE: 6.0, // how fast throttle/brake ramps (input smoothing, 1/s)
+  ACCEL: 13, // m/s^2 under throttle
+  BRAKE: 24, // m/s^2 under brake (while moving forward)
+  REVERSE_MAX: 8, // m/s cap in reverse
+  MAX_SPEED: 34, // m/s (~122 km/h)
+  FRICTION: 6, // m/s^2 coast-down when off the pedals
+  TURN: 1.55, // rad/s at full lock and full authority
+  TURN_FULL_SPEED: 9, // m/s at which steering reaches full authority
+  STEER_EASE: 5.0, // how fast the wheel approaches the input (1/s)
 };
 
-export function createCar(x = 0, z = 0, yaw = 0) {
-  return {
-    x,
-    z,
-    yaw, // heading (rad); 0 faces +z
-    vx: 0,
-    vz: 0, // velocity in world axes (m/s)
-    steer: 0, // current front-wheel angle (rad), eased toward input
-    speed: 0, // signed forward speed (m/s) — for HUD / camera
-    slip: 0, // |lateral speed| — for skid feedback
-    // previous state, for render interpolation (§12: render interpolates on top)
-    prevX: x,
-    prevZ: z,
-    prevYaw: yaw,
-    prevSteer: 0,
-  };
-}
+// The chase camera looks along +z, which flips screen left/right versus the
+// math. -1 makes "steer right" curve right ON SCREEN. Flip here if it ever feels
+// inverted again — one place, not scattered.
+const STEER_SIGN = -1;
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const approach = (cur, target, rate, dt) => {
@@ -56,71 +35,60 @@ const approach = (cur, target, rate, dt) => {
   return Math.abs(d) <= step ? target : cur + Math.sign(d) * step;
 };
 
-// Advance one fixed step. `input`: {throttle, brake, steer:-1..1, handbrake}
-// (all optional; throttle/brake/handbrake are 0/1 or boolean).
+export function createCar(x = 0, z = 0, yaw = 0) {
+  return {
+    x, z, yaw,
+    vx: 0, vz: 0,
+    steer: 0,
+    speed: 0,
+    slip: 0, // always 0 now (kept so HUD/tests referencing it don't break)
+    prevX: x, prevZ: z, prevYaw: yaw, prevSteer: 0,
+  };
+}
+
+// input: {throttle, brake, steer:-1..1}
 export function stepCar(car, input, dt) {
-  // snapshot for interpolation
   car.prevX = car.x;
   car.prevZ = car.z;
   car.prevYaw = car.yaw;
   car.prevSteer = car.steer;
 
-  // heading basis: forward (sin,cos), right (cos,-sin)
   const fx = Math.sin(car.yaw);
   const fz = Math.cos(car.yaw);
-  const rx = Math.cos(car.yaw);
-  const rz = -Math.sin(car.yaw);
 
-  // split velocity into forward / lateral
-  let vForward = car.vx * fx + car.vz * fz;
-  let vLateral = car.vx * rx + car.vz * rz;
+  // forward speed re-derived from velocity, so a collision's velocity change
+  // carries over and any lateral component is discarded (on rails, no slip)
+  let speed = car.vx * fx + car.vz * fz;
 
-  // longitudinal forces
-  const throttle = input.throttle ? 1 : 0;
-  const brake = input.brake ? 1 : 0;
-  let accel = throttle * CAR.ENGINE;
-  if (brake) accel -= vForward > 0.3 ? CAR.BRAKE : CAR.REVERSE;
-  // rolling resistance + quadratic drag oppose motion
-  accel -= Math.sign(vForward) * CAR.ROLL;
-  accel -= vForward * Math.abs(vForward) * CAR.DRAG;
-  const nextForward = vForward + accel * dt;
-  // don't let resistance push a near-stopped car backwards
-  vForward = brake || throttle || Math.abs(vForward) > 0.05 ? nextForward : 0;
+  if (input.throttle) speed += CAR.ACCEL * dt;
+  else if (input.brake) speed -= (speed > 0.2 ? CAR.BRAKE : CAR.ACCEL * 0.6) * dt;
+  else {
+    // coast toward 0
+    const f = CAR.FRICTION * dt;
+    speed = speed > 0 ? Math.max(0, speed - f) : Math.min(0, speed + f);
+  }
+  speed = clamp(speed, -CAR.REVERSE_MAX, CAR.MAX_SPEED);
 
-  // tyre grip eats lateral velocity; handbrake loosens it → slide
-  const grip = input.handbrake ? CAR.HANDBRAKE_GRIP : CAR.GRIP;
-  vLateral -= vLateral * clamp(grip * dt, 0, 1);
+  // steer wheel eases toward input; authority grows with speed and flips in
+  // reverse (like a real car backing up)
+  car.steer = approach(car.steer, clamp(input.steer || 0, -1, 1), CAR.STEER_EASE, dt);
+  const authority = clamp(Math.abs(speed) / CAR.TURN_FULL_SPEED, 0, 1) * Math.sign(speed);
+  car.yaw += STEER_SIGN * car.steer * CAR.TURN * authority * dt;
 
-  // Recompose in the CURRENT heading frame — velocity lives in world axes and
-  // does NOT rotate rigidly with the car. The lag between where the car points
-  // and where it travels IS the slip; grip closes it over time, the handbrake
-  // lets it open up (drift). Recomposing in the new frame instead would put the
-  // car on rails and grip would do nothing.
-  car.vx = fx * vForward + rx * vLateral;
-  car.vz = fz * vForward + rz * vLateral;
-
-  // steering: ease the wheel toward input, reduce lock at speed
-  const speedLockScale = 1 - 0.55 * clamp(Math.abs(vForward) / 34, 0, 1);
-  const targetSteer = clamp(input.steer || 0, -1, 1) * CAR.MAX_STEER * speedLockScale;
-  car.steer = approach(car.steer, targetSteer, CAR.STEER_SPEED, dt);
-
-  // bicycle-model yaw rate (only turns when rolling). Heading turns AFTER the
-  // velocity is set, so next step it reads as slip.
-  const yawRate = (vForward / CAR.WHEELBASE) * Math.tan(car.steer);
-  car.yaw += yawRate * dt;
-
-  // integrate position
+  // velocity strictly along the NEW heading → the path curved, nothing slid
+  const nfx = Math.sin(car.yaw);
+  const nfz = Math.cos(car.yaw);
+  car.vx = nfx * speed;
+  car.vz = nfz * speed;
   car.x += car.vx * dt;
   car.z += car.vz * dt;
 
-  car.speed = vForward;
-  car.slip = Math.abs(vLateral);
+  car.speed = speed;
+  car.slip = 0;
 }
 
 // Interpolated render transform between prev and current state (§12).
-// Writes into `out` (a plain {x,z,yaw,steer}) to avoid allocation.
 export function interpCar(car, alpha, out) {
-  // shortest-arc yaw interpolation
   let dyaw = car.yaw - car.prevYaw;
   if (dyaw > Math.PI) dyaw -= Math.PI * 2;
   else if (dyaw < -Math.PI) dyaw += Math.PI * 2;

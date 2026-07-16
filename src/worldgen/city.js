@@ -43,6 +43,33 @@ function placeBuilding(mb, col, cx, cz, fw, fd, floors, roofType, palette, seed,
   }
 }
 
+// Parked cars along a block's kerbs. Only the +x and +z edges are used so the
+// two blocks sharing a street don't both fill it. Cars sit just off the kerb in
+// the street, facing along it, with deterministic gaps (sparse & believable).
+const CAR_LEN = 4.2;
+const PARK_SLOT = CAR_LEN + 1.6;
+function placeParking(park, bx, bz, seed) {
+  const half = BLOCK / 2;
+  const kerb = half + 1.7; // metres past the block edge, into the street
+  const slots = Math.floor(BLOCK / PARK_SLOT); // ~ per edge
+  // +x edge — cars face ±z (along the street)
+  for (let s = 0; s < slots; s++) {
+    const h = hash(seed, 'px', s);
+    if (unit(h) < 0.86) continue; // sparse
+    const along = -half + (s + 0.5) * PARK_SLOT;
+    const yaw = h & 1 ? 0 : Math.PI;
+    park.push({ x: bx + kerb, z: bz + along, yaw });
+  }
+  // +z edge — cars face ±x
+  for (let s = 0; s < slots; s++) {
+    const h = hash(seed, 'pz', s);
+    if (unit(h) < 0.86) continue;
+    const along = -half + (s + 0.5) * PARK_SLOT;
+    const yaw = h & 1 ? Math.PI / 2 : -Math.PI / 2;
+    park.push({ x: bx + along, z: bz + kerb, yaw });
+  }
+}
+
 function placeTree(mb, x, z, seed) {
   const h = 2.2 + unit(hash(seed, 'th')) * 2.4;
   mb.box(x, h * 0.4, z, 0.32, h * 0.8, 0.32, SURFACE.trunk);
@@ -123,6 +150,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
 
   const N = Math.ceil(R / PITCH) + 1;
   const colliders = []; // building footprints (city space) for the driving sim
+  const park = []; // parked-car spots {x,z,yaw} along the kerbs
   let blocks = 0;
   let buildings = 0;
   const zones = { core: 0, ring: 0, edge: 0 };
@@ -146,6 +174,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       mb.plane(bx, bz, BLOCK, BLOCK, 0.02, SURFACE.sidewalk);
 
       buildings += buildBlock(mb, colliders, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
+      placeParking(park, bx, bz, blockSeed);
     }
   }
 
@@ -161,7 +190,8 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
     colors: geo.colors,
     indices: geo.indices,
     colliders,
-    stats: { blocks, buildings, zones, triangles: geo.triangles, vertices: geo.vertices },
+    parking: park,
+    stats: { blocks, buildings, zones, parked: park.length, triangles: geo.triangles, vertices: geo.vertices },
   };
 }
 

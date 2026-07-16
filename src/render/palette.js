@@ -35,7 +35,7 @@ export const ROOFS = {
 export const SURFACE = {
   asphalt: hex(0x1c2124),
   sidewalk: hex(0x3a4045),
-  ground: hex(0x232a22), // scrub earth around the city
+  ground: hex(0x2a241c), // dusty dirt around the city — blends into the fog, not a green sheet
   parapet: hex(0x2a2d30),
   window: hex(0x11161b),
   foliage: hex(0x3f5a39),

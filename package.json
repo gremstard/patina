@@ -9,11 +9,11 @@
     "worldindex": "node scripts/build-world-index.js",
     "bundle": "node scripts/bundle-web.js",
     "bundle:city": "node scripts/bundle-app.js city",
-    "bundle:drive": "node scripts/bundle-app.js drive",
-    "build": "node scripts/bundle-web.js && node scripts/bundle-app.js city && node scripts/bundle-app.js drive",
+    "bundle:play": "node scripts/bundle-app.js play",
+    "build": "node scripts/bundle-web.js && node scripts/bundle-app.js city && node scripts/bundle-app.js play",
     "smoke": "node scripts/bundle-web.js && node scripts/smoke-web.mjs",
     "smoke:city": "node scripts/bundle-app.js city && node scripts/smoke-app.mjs city",
-    "smoke:drive": "node scripts/bundle-app.js drive && node scripts/smoke-app.mjs drive w"
+    "smoke:play": "node scripts/bundle-app.js play && node scripts/smoke-app.mjs play ew"
   },
   "engines": {
     "node": ">=20"
