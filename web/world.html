@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Patina — World</title>
+<style>
+  :root {
+    --ground: #0b0e10; --ground-2: #0e1315; --panel: #141a1d; --panel-2: #101619;
+    --ink: #c8d0cb; --ink-dim: #7d8a84; --ink-faint: #4a5551;
+    --rust: #d0703c; --rust-bright: #e89a5a; --line: #232c30;
+    --mono: ui-monospace, "DejaVu Sans Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 14px; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  #app { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+
+  header { display: flex; align-items: baseline; gap: 18px; padding: 12px 20px 10px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, var(--ground-2), var(--ground)); flex-wrap: wrap; }
+  .wordmark { font-size: 26px; font-weight: 700; letter-spacing: 0.4em; margin: 0; padding-left: 0.4em; background: linear-gradient(100deg, var(--rust-bright), var(--rust) 40%, #8593a0); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .crumb { color: var(--ink-faint); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .crumb b { color: var(--rust); }
+  .actions { margin-left: auto; display: flex; gap: 8px; }
+  button { background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 11px; border-radius: 2px; cursor: pointer; transition: border-color .12s, color .12s; }
+  button:hover { border-color: var(--rust); color: var(--rust-bright); }
+  button:focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
+
+  main { display: grid; grid-template-columns: 186px 1fr; min-height: 0; }
+  .rail { border-right: 1px solid var(--line); background: var(--panel-2); padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+  .rail h2 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 9px; font-weight: 600; }
+  .stats { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  .stat { display: flex; justify-content: space-between; gap: 8px; }
+  .stat .k { color: var(--ink-faint); }
+  .stat .v { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+  .stat .v.accent { color: var(--rust-bright); }
+  .keys { font-size: 11px; color: var(--ink-dim); line-height: 1.9; }
+  .keys kbd { font-family: var(--mono); font-size: 10.5px; color: var(--rust-bright); border: 1px solid var(--line); border-radius: 2px; padding: 1px 5px; background: var(--panel); }
+
+  .viewport { position: relative; overflow: hidden; background: #05070a; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .speedo { position: absolute; right: 18px; bottom: 16px; text-align: right; pointer-events: none; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  .speedo .n { font-size: 50px; font-weight: 700; line-height: 0.9; font-variant-numeric: tabular-nums; color: var(--rust-bright); }
+  .speedo .u { font-size: 12px; letter-spacing: 0.3em; color: var(--ink-dim); }
+  .near { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; pointer-events: none; background: rgba(10,14,16,0.6); border: 1px solid var(--line); padding: 5px 12px; border-radius: 3px; font-size: 12px; }
+  .near .arrow { width: 16px; height: 16px; color: var(--rust-bright); }
+  #compass { transition: transform .1s linear; transform-origin: 50% 50%; }
+  /* minimap — corner by default, fills the viewport when open */
+  #map { position: absolute; right: 14px; top: 14px; width: 200px; height: 200px; border: 1px solid var(--line); border-radius: 3px; background: #0a0d0f; cursor: pointer; image-rendering: pixelated; box-shadow: 0 4px 18px rgba(0,0,0,0.5); }
+  #map.open { right: 50%; top: 50%; transform: translate(50%,-50%); width: min(78vmin,620px); height: min(78vmin,620px); border-color: var(--rust); z-index: 10; }
+  .maphint { position: absolute; right: 14px; top: 220px; font-size: 10px; letter-spacing: 0.06em; color: var(--ink-dim); pointer-events: none; }
+
+  footer { display: flex; align-items: center; gap: 16px; padding: 7px 20px; border-top: 1px solid var(--line); background: var(--ground-2); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint); flex-wrap: wrap; }
+  footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
+  footer .spacer { margin-left: auto; }
+
+  @media (max-width: 820px) {
+    body { overflow: auto; } #app { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .rail { border-right: none; border-bottom: 1px solid var(--line); }
+    .viewport { height: 66vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 class="wordmark">PATINA</h1>
+    <span class="crumb">Phase 5 · <b>The world</b> · 128 × 128 km</span>
+    <div class="actions">
+      <button id="travel">Map / Fast-travel</button>
+      <button id="respawn">Back to start</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="rail">
+      <section>
+        <h2>Controls</h2>
+        <div class="keys">
+          <kbd>W</kbd><kbd>S</kbd> drive<br />
+          <kbd>A</kbd><kbd>D</kbd> steer<br />
+          <kbd>M</kbd> world map<br />
+          click a city on the map to fast-travel
+        </div>
+      </section>
+      <section>
+        <h2>Position</h2>
+        <div class="stats">
+          <div class="stat"><span class="k">world</span><span class="v" id="s-pos">—</span></div>
+          <div class="stat"><span class="k">nearest</span><span class="v accent" id="s-near">—</span></div>
+          <div class="stat"><span class="k">speed</span><span class="v" id="s-speed">0</span></div>
+          <div class="stat"><span class="k">cities loaded</span><span class="v" id="s-loaded">0</span></div>
+        </div>
+      </section>
+      <section>
+        <h2>Streaming · §6</h2>
+        <div class="keys">nothing exists beyond the fog. cities are generated on approach, deleted behind you — re-hashed identically next time.</div>
+      </section>
+    </aside>
+
+    <div class="viewport">
+      <canvas id="view"></canvas>
+      <div class="near">
+        <svg id="compass" class="arrow" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1 L13 14 L8 11 L3 14 Z" /></svg>
+        <span id="s-near2"></span>
+      </div>
+      <canvas id="map" width="256" height="256"></canvas>
+      <div class="maphint">click map to travel</div>
+      <div class="speedo"><span class="n" id="s-speed2">0</span><div class="u">KM/H</div></div>
+    </div>
+  </main>
+
+  <footer>
+    <span class="phase">Phase 5 · The world</span>
+    <span>sim in world coords (float64) · floating-origin render (§8) · settlement streaming (§6)</span>
+    <span class="spacer"></span>
+    <span>5 metros · 36 cities · 168 towns · one seed</span>
+  </footer>
+</div>
+<script type="module" src="./world.js"></script>
+</body>
+</html>

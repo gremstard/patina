@@ -10,10 +10,12 @@
     "bundle": "node scripts/bundle-web.js",
     "bundle:city": "node scripts/bundle-app.js city",
     "bundle:play": "node scripts/bundle-app.js play",
-    "build": "node scripts/bundle-web.js && node scripts/bundle-app.js city && node scripts/bundle-app.js play",
+    "bundle:world": "node scripts/bundle-app.js world",
+    "build": "node scripts/bundle-web.js && node scripts/bundle-app.js city && node scripts/bundle-app.js play && node scripts/bundle-app.js world",
     "smoke": "node scripts/bundle-web.js && node scripts/smoke-web.mjs",
     "smoke:city": "node scripts/bundle-app.js city && node scripts/smoke-app.mjs city",
-    "smoke:play": "node scripts/bundle-app.js play && node scripts/smoke-app.mjs play ew"
+    "smoke:play": "node scripts/bundle-app.js play && node scripts/smoke-app.mjs play ew",
+    "smoke:world": "node scripts/bundle-app.js world && node scripts/smoke-app.mjs world w"
   },
   "engines": {
     "node": ">=20"

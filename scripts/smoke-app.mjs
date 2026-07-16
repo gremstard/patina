@@ -48,7 +48,9 @@ await browser.close();
 
 const calls = Number(hud.calls);
 const drove = keys.includes('w') ? Number(hud.speed) > 0 : true;
-const ok = errors.length === 0 && Number.isFinite(calls) && calls >= 1 && drove;
+// draw-calls stat is optional (not every app shows it); enforce only if present
+const callsOk = hud.calls == null ? true : Number.isFinite(calls) && calls >= 1;
+const ok = errors.length === 0 && callsOk && drove;
 
 console.log(`app: ${name}`);
 console.log('hud    :', JSON.stringify(hud));

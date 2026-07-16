@@ -21,3 +21,4 @@ jobs:
       - run: node scripts/bundle-web.js
       - run: node scripts/bundle-app.js city
       - run: node scripts/bundle-app.js play
+      - run: node scripts/bundle-app.js world

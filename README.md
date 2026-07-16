@@ -13,7 +13,7 @@ The full design lives in [`docs/PATINA.md`](docs/PATINA.md) — **the only desig
 document.** Read §1 (the thesis) and §0 (the hard rules) first. Everything in
 `src/` cites the section it implements.
 
-## Status — Phase 5: On foot & driving ✅
+## Status — Phase 5: The world ✅
 
 The roadmap (§16) gates each phase on the previous one running.
 
@@ -56,6 +56,21 @@ to get out. Parked cars are one **InstancedMesh** (a single draw call for
 thousands). Driving is deliberately simple — W/S move along the path, steering
 *curves* the path, no lateral slip.
 
+**Phase 5 — The world** (the full 128 × 128 km, streamed):
+
+| Piece | Section | File |
+|---|---|---|
+| Streaming decisions (what to load) | §6 | `src/worldgen/streaming.js` |
+| **World app** (drive it, cities stream, fast-travel) | §4, §6, §8 | `web/world.html` · `web/world.js` |
+
+Drive the whole bounded world. Cities are **generated on approach and deleted
+behind the fog** (hard rule 6) — "chunks like Minecraft", keyed to settlements
+because settlements are the content. The sim runs in **absolute world metres**
+(JS numbers are float64, so no jitter at 64 km out); **floating origin** (§8) is
+a render-only concern — a world group offset by `-renderOrigin` so the GPU only
+ever sees small coordinates near the car. A minimap shows the whole world;
+click any city to **fast-travel**.
+
 The generation core (`meshbuilder`, `city`) is **pure and worker-ready** — it
 returns transferable typed arrays with no three.js, so moving it into a Web
 Worker (hard rule 5) later is plumbing, not a rewrite. A whole city merges into
@@ -72,17 +87,19 @@ into self-contained files.
 ## Commands
 
 ```
-npm test                 # determinism + city + driving/walking suite (§5) — 24 checks
+npm test                 # determinism + city + driving + streaming suite (§5) — 29 checks
 npm run worldindex       # build the offline world index blob (§4)
 npm run bundle           # build the 2D world-map explorer  → dist/index.html
 npm run bundle:city      # build the 3D city viewer          → dist/city.html
 npm run bundle:play      # build the on-foot + driving game  → dist/play.html
-npm run smoke:play       # headless WebGL check (gets in a car, asserts it moves)
+npm run bundle:world     # build the full-world driver       → dist/world.html
 ```
 
-Open `dist/index.html` (map), `dist/city.html` (city), or `dist/play.html`
-(play) in a browser — all self-contained, no server needed. In `play`:
-**W/S** walk·drive, **A/D** turn·steer, **Shift** run, **E** get in / out of a car, **R** new spawn.
+Open any of `dist/index.html` (map), `dist/city.html` (city), `dist/play.html`
+(walk + drive one city), or `dist/world.html` (drive the whole 128 km world) in a
+browser — all self-contained, no server needed.
+- **play**: **W/S** walk·drive, **A/D** turn·steer, **Shift** run, **E** in/out of a car, **R** respawn.
+- **world**: **W/S** drive, **A/D** steer, **M** world map, click a city to fast-travel.
 
 ## What the determinism test pins
 

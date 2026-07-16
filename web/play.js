@@ -240,8 +240,19 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
+// The camera heading LAGS the entity heading, so steering turns the car in
+// frame instead of whipping the whole view around. camYaw eases toward yaw.
+let camYaw = 0;
 function placeCamera(x, z, yaw, dist, height, aimY) {
-  fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
+  if (!camReady) {
+    camYaw = yaw;
+  } else {
+    let d = yaw - camYaw;
+    if (d > Math.PI) d -= Math.PI * 2;
+    else if (d < -Math.PI) d += Math.PI * 2;
+    camYaw += d * 0.07; // gentle — quick A/D taps barely move the camera
+  }
+  fwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   const tx = x - fwd.x * dist;
   const tz = z - fwd.z * dist;
   if (!camReady) { camPos.set(tx, height, tz); camReady = true; }
