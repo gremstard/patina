@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Patina — World Map</title>
+<style>
+  /* ── PSX / CRT map terminal. Single committed dark theme (§3). ─────────── */
+  :root {
+    --ground: #0b0e10;
+    --ground-2: #0e1315;
+    --panel: #141a1d;
+    --panel-2: #101619;
+    --ink: #c8d0cb;
+    --ink-dim: #7d8a84;
+    --ink-faint: #4a5551;
+    --rust: #d0703c;
+    --rust-bright: #e89a5a;
+    --line: #232c30;
+    --line-2: #1a2225;
+    /* Culture quad — §9 palette hints */
+    --anglic: #c05a3e;
+    --iberic: #d99a4e;
+    --rustbelt: #8593a0;
+    --conlang: #9fae86;
+    --mono: ui-monospace, "DejaVu Sans Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  #app {
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 1fr;
+  }
+
+  /* ── Header ────────────────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--ground-2), var(--ground));
+    flex-wrap: wrap;
+  }
+  .wordmark {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 0.42em;
+    margin: 0;
+    padding-left: 0.42em;
+    background: linear-gradient(100deg, var(--rust-bright) 0%, var(--rust) 38%, var(--rustbelt) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 22px rgba(208, 112, 60, 0.18);
+  }
+  .tagline {
+    color: var(--ink-dim);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    max-width: 42ch;
+  }
+  .tagline b { color: var(--rust-bright); font-weight: 600; }
+  .seedbar {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .seedbar label {
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  input[type="number"] {
+    width: 108px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="number"]:focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
+  button {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 6px 11px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+  }
+  button:hover { border-color: var(--rust); color: var(--rust-bright); }
+  button:active { background: var(--panel-2); }
+  button:focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
+  button.on { border-color: var(--rust); color: var(--rust-bright); background: rgba(208, 112, 60, 0.08); }
+
+  /* ── Main three-column body ────────────────────────────────────────────── */
+  main {
+    display: grid;
+    grid-template-columns: 232px 1fr 268px;
+    min-height: 0;
+  }
+  .rail {
+    border-right: 1px solid var(--line);
+    background: var(--panel-2);
+    padding: 16px 14px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .rail.right { border-right: none; border-left: 1px solid var(--line); }
+
+  .rail h2 {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 10px;
+    font-weight: 600;
+  }
+
+  /* Count stat tiles (§4 spec, live) */
+  .counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left-width: 3px;
+    border-radius: 2px;
+    padding: 8px 10px;
+  }
+  .tile .n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .tile .k { font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); margin-top: 5px; }
+  .tile .k span { color: var(--ink-faint); }
+  .tile.metro { border-left-color: var(--rust-bright); }
+  .tile.city { border-left-color: var(--iberic); }
+  .tile.town { border-left-color: var(--conlang); }
+  .tile.hamlet { border-left-color: var(--ink-faint); }
+
+  .digest {
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    letter-spacing: 0.04em;
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+  }
+  .digest b { color: var(--rust-bright); font-weight: 600; }
+
+  /* Legend */
+  .legend { display: flex; flex-direction: column; gap: 9px; }
+  .cult { display: flex; align-items: flex-start; gap: 9px; }
+  .swatch { width: 11px; height: 11px; margin-top: 3px; flex: none; border: 1px solid rgba(255,255,255,0.15); }
+  .cult .nm { font-size: 12px; color: var(--ink); }
+  .cult .fl { font-size: 10px; color: var(--ink-dim); letter-spacing: 0.02em; }
+
+  .toggles { display: flex; flex-direction: column; gap: 7px; }
+  .toggles button { text-align: left; }
+
+  /* ── Viewport ──────────────────────────────────────────────────────────── */
+  .viewport { position: relative; overflow: hidden; background: #05070800; }
+  #map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; cursor: grab; }
+  #map.dragging { cursor: grabbing; }
+  .scan {
+    position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0px, rgba(0,0,0,0.16) 1px, transparent 2px, transparent 3px);
+    mix-blend-mode: multiply;
+    opacity: 0.7;
+  }
+  .vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(120% 120% at 50% 50%, transparent 52%, rgba(4,6,7,0.55) 100%); }
+  #tooltip {
+    position: absolute; pointer-events: none; z-index: 5;
+    background: rgba(10,14,16,0.94);
+    border: 1px solid var(--rust);
+    border-radius: 2px;
+    padding: 5px 8px;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    transform: translate(-50%, calc(-100% - 12px));
+    opacity: 0;
+    transition: opacity 0.08s;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+  }
+  #tooltip .t-name { color: var(--rust-bright); font-weight: 600; }
+  #tooltip .t-meta { color: var(--ink-dim); }
+  .scale-badge {
+    position: absolute; left: 12px; bottom: 12px; z-index: 4;
+    font-size: 10px; letter-spacing: 0.1em; color: var(--ink-dim);
+    background: rgba(10,14,16,0.6); border: 1px solid var(--line); padding: 4px 8px; border-radius: 2px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .scale-badge .bar { display: inline-block; height: 3px; background: var(--ink-dim); }
+
+  /* ── Inspector ─────────────────────────────────────────────────────────── */
+  .inspector .empty { color: var(--ink-dim); font-size: 12px; line-height: 1.7; }
+  .inspector .empty kbd {
+    font-family: var(--mono); font-size: 11px; color: var(--rust-bright);
+    border: 1px solid var(--line); border-radius: 2px; padding: 1px 5px; background: var(--panel);
+  }
+  .sel-name { font-size: 19px; font-weight: 700; color: var(--rust-bright); margin: 0 0 2px; text-wrap: balance; letter-spacing: 0.01em; }
+  .sel-tier { font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 14px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; margin-bottom: 16px; }
+  .kv dt { color: var(--ink-faint); letter-spacing: 0.04em; }
+  .kv dd { margin: 0; text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .kv dd .dot { display: inline-block; width: 9px; height: 9px; margin-left: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,0.15); }
+
+  .zoning h3 { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 8px; }
+  .zone-row { display: flex; align-items: center; gap: 9px; padding: 6px 0; border-top: 1px solid var(--line-2); font-size: 11.5px; }
+  .zone-swatch { width: 13px; height: 13px; flex: none; border-radius: 50%; }
+  .zone-row .zn { text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink); width: 42px; font-size: 10px; }
+  .zone-row .zd { color: var(--ink-dim); font-size: 10.5px; }
+  .zone-row .zd b { color: var(--ink); font-weight: 600; }
+
+  /* ── Footer ────────────────────────────────────────────────────────────── */
+  footer {
+    display: flex; align-items: center; gap: 16px;
+    padding: 8px 20px;
+    border-top: 1px solid var(--line);
+    background: var(--ground-2);
+    font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint);
+    flex-wrap: wrap;
+  }
+  footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
+  footer .hint { color: var(--ink-dim); }
+  footer .spacer { margin-left: auto; }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    #app { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .rail, .rail.right { border: none; border-bottom: 1px solid var(--line); }
+    .viewport { height: 62vh; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 class="wordmark">PATINA</h1>
+    <div class="tagline">A bounded <b>128×128&nbsp;km</b> world, generated from a single seed. Every city, name, and culture below is a pure function of it — <b>same seed, same world</b>.</div>
+    <div class="seedbar">
+      <label for="seed">Seed</label>
+      <input id="seed" type="number" min="0" step="1" value="8829" />
+      <button id="reroll" title="Jump to a random seed">Re-roll</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="rail left">
+      <section>
+        <h2>Settlements <span style="color:var(--ink-faint)">/ §4 spec</span></h2>
+        <div class="counts" id="counts"></div>
+        <div class="digest"><span>digest</span> <b id="digest">—</b></div>
+      </section>
+      <section>
+        <h2>Naming cultures / §9</h2>
+        <div class="legend" id="legend"></div>
+      </section>
+      <section>
+        <h2>Layers</h2>
+        <div class="toggles">
+          <button id="t-terrain" class="on">▓ Habitability field</button>
+          <button id="t-grid">▦ Region grid 16×16</button>
+          <button id="t-labels" class="on">Aa Place labels</button>
+          <button id="t-fit">⤢ Fit world</button>
+        </div>
+      </section>
+    </aside>
+
+    <div class="viewport">
+      <canvas id="map"></canvas>
+      <div class="scan"></div>
+      <div class="vig"></div>
+      <div id="tooltip"></div>
+      <div class="scale-badge"><span class="bar" id="scalebar"></span><span id="scaletext">—</span></div>
+    </div>
+
+    <aside class="rail right inspector" id="inspector">
+      <div class="empty">
+        <h2 style="margin-bottom:12px">Inspector</h2>
+        <p><kbd>Drag</kbd> to pan the world.<br />
+        <kbd>Wheel</kbd> to zoom.<br />
+        <kbd>Click</kbd> a settlement to inspect it — labelled places show their <b style="color:var(--rust-bright)">§7 zoning rings</b>: the density gradient from tower core to suburban edge.</p>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <span class="phase">Phase 2 · Foundation</span>
+    <span class="hint">hash chain · determinism · zoning · floating origin · world index</span>
+    <span class="spacer"></span>
+    <span class="hint" id="genstat">—</span>
+  </footer>
+</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>

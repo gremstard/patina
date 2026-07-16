@@ -6,9 +6,14 @@
   "description": "An open-world PSX-style driving/crime game. Bounded procedural world, built from primitives.",
   "scripts": {
     "test": "node --test",
-    "worldindex": "node scripts/build-world-index.js"
+    "worldindex": "node scripts/build-world-index.js",
+    "bundle": "node scripts/bundle-web.js",
+    "smoke": "node scripts/bundle-web.js && node scripts/smoke-web.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.61.1"
   }
 }

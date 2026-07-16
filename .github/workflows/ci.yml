@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The determinism test (§5) has zero dependencies — it is the guard that
+      # the world can't silently drift. It must pass on every push.
+      - run: node --test
+      # The world-map bundle must build cleanly.
+      - run: node scripts/bundle-web.js
