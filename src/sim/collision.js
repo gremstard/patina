@@ -130,6 +130,31 @@ export function resolveCollision(body, cg, radius = 1.0, off = 0) {
   return contacts;
 }
 
+// Push a body out of ambient agents (peds / traffic) so they are SOLID — you
+// can't walk or drive through them. Agents carry render position rx/rz and a
+// radius r; only the body is pushed (agents keep their lane), which reads as
+// solid without ragdolling the crowd. Allocation-free.
+export function resolveAgents(body, agents, bodyRadius) {
+  for (let i = 0; i < agents.length; i++) {
+    const a = agents[i];
+    if (!a.live) continue;
+    const dx = body.x - a.rx;
+    const dz = body.z - a.rz;
+    const rr = bodyRadius + a.r;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= rr * rr || d2 < 1e-6) continue;
+    const d = Math.sqrt(d2);
+    const inv = 1 / d;
+    const push = rr - d;
+    const nX = dx * inv;
+    const nZ = dz * inv;
+    body.x += nX * push;
+    body.z += nZ * push;
+    const vn = body.vx * nX + body.vz * nZ;
+    if (vn < 0) { body.vx -= vn * nX; body.vz -= vn * nZ; }
+  }
+}
+
 // Is world point (x,z) inside a BUILDING (not a parked car) within `margin`?
 // Used to pull the chase camera in so it doesn't clip through walls.
 export function pointBlocked(cg, x, z, margin = 0) {

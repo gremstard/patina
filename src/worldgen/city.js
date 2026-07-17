@@ -53,12 +53,12 @@ const CAR_LEN = 4.2;
 const PARK_SLOT = CAR_LEN + 1.6;
 function placeParking(park, bx, bz, seed) {
   const half = BLOCK / 2;
-  const kerb = half + 1.7; // metres past the block edge, into the street
+  const kerb = half + 1.1; // hug the kerb, leaving a clear driving lane mid-street
   const slots = Math.floor(BLOCK / PARK_SLOT); // ~ per edge
   // +x edge — cars face ±z (along the street)
   for (let s = 0; s < slots; s++) {
     const h = hash(seed, 'px', s);
-    if (unit(h) < 0.86) continue; // sparse
+    if (unit(h) < 0.9) continue; // sparse — don't wall off the street
     const along = -half + (s + 0.5) * PARK_SLOT;
     const yaw = h & 1 ? 0 : Math.PI;
     park.push({ x: bx + kerb, z: bz + along, yaw });
@@ -66,7 +66,7 @@ function placeParking(park, bx, bz, seed) {
   // +z edge — cars face ±x
   for (let s = 0; s < slots; s++) {
     const h = hash(seed, 'pz', s);
-    if (unit(h) < 0.86) continue;
+    if (unit(h) < 0.9) continue;
     const along = -half + (s + 0.5) * PARK_SLOT;
     const yaw = h & 1 ? Math.PI / 2 : -Math.PI / 2;
     park.push({ x: bx + along, z: bz + kerb, yaw });

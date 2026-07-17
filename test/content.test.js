@@ -8,6 +8,18 @@ import assert from 'node:assert/strict';
 
 import { buildCarType, CAR_TYPES, CAR_COLORS } from '../src/render/car.js';
 import { Ambient } from '../src/sim/ambient.js';
+import { buildRoads } from '../src/worldgen/roads.js';
+import { generateWorldIndex } from '../src/worldgen/worldIndex.js';
+
+test('the highway network is a spanning tree over every labelled settlement', () => {
+  const index = generateWorldIndex(8829);
+  const labelled = index.settlements.filter((s) => s.tier !== 'hamlet').length;
+  const roads = buildRoads(index);
+  // a spanning tree over N nodes has exactly N-1 edges and connects them all
+  assert.equal(roads.length, labelled - 1, `MST should have ${labelled - 1} edges`);
+  // deterministic
+  assert.equal(buildRoads(generateWorldIndex(8829)).length, roads.length);
+});
 
 test('every car type is well-formed, cheap geometry', () => {
   assert.ok(CAR_TYPES.length >= 4, 'a few body types');
@@ -25,7 +37,7 @@ test('every car type is well-formed, cheap geometry', () => {
 test('ambient agents populate the city and stay inside the fog bubble', () => {
   const a = new Ambient(40, 16, 7);
   a.setCity(0, 0, 900, true);
-  for (let i = 0; i < 300; i++) a.update(0, 0, 1 / 60);
+  for (let i = 0; i < 300; i++) a.update(0, 0, 0, 1 / 60);
   const livePeds = a.peds.filter((p) => p.live);
   const liveCars = a.cars.filter((c) => c.live);
   assert.ok(livePeds.length > 10, `expected a crowd, got ${livePeds.length}`);
@@ -37,10 +49,10 @@ test('ambient agents populate the city and stay inside the fog bubble', () => {
 test('nothing exists beyond the fog — leaving the city clears ambient life', () => {
   const a = new Ambient(40, 16, 7);
   a.setCity(0, 0, 900, true);
-  for (let i = 0; i < 120; i++) a.update(0, 0, 1 / 60);
+  for (let i = 0; i < 120; i++) a.update(0, 0, 0, 1 / 60);
   assert.ok(a.peds.some((p) => p.live), 'populated while in the city');
   a.setCity(0, 0, 900, false); // out in open country
-  a.update(0, 0, 1 / 60);
+  a.update(0, 0, 0, 1 / 60);
   assert.ok(!a.peds.some((p) => p.live), 'streets empty out of town');
   assert.ok(!a.cars.some((c) => c.live));
 });
@@ -48,9 +60,9 @@ test('nothing exists beyond the fog — leaving the city clears ambient life', (
 test('agents follow the player as they move (recycled ahead, not left behind)', () => {
   const a = new Ambient(40, 16, 7);
   a.setCity(0, 0, 4000, true); // big radius so the player stays in-city
-  for (let i = 0; i < 60; i++) a.update(0, 0, 1 / 60);
+  for (let i = 0; i < 60; i++) a.update(0, 0, 0, 1 / 60);
   // teleport the player 1 km away; after a step, live agents should be near the new spot
-  a.update(1000, 0, 1 / 60);
-  for (let i = 0; i < 60; i++) a.update(1000, 0, 1 / 60);
+  a.update(1000, 0, 0, 1 / 60);
+  for (let i = 0; i < 60; i++) a.update(1000, 0, 0, 1 / 60);
   for (const p of a.peds.filter((x) => x.live)) assert.ok(Math.hypot(p.x - 1000, p.z) < 120, 'ped not re-homed to the player');
 });

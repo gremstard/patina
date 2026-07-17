@@ -15,10 +15,14 @@ import { buildPed } from '../src/render/ped.js';
 import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx.js';
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
-import { buildColliderGrid, resolveCollision, nearestParked, pointBlocked } from '../src/sim/collision.js';
+import { buildColliderGrid, resolveCollision, resolveAgents, nearestParked, pointBlocked } from '../src/sim/collision.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
 import { Ambient } from '../src/sim/ambient.js';
-import { hash } from '../src/core/hash.js';
+import { buildRoads, segDist2 } from '../src/worldgen/roads.js';
+import { buildTree } from '../src/render/props.js';
+import { MeshBuilder } from '../src/render/meshbuilder.js';
+import { SURFACE } from '../src/render/palette.js';
+import { hash, unit } from '../src/core/hash.js';
 import { FOG_FAR, BLOCK, CORRIDOR, HALF_WORLD_M, WORLD_M, CITY_R } from '../src/core/constants.js';
 
 const PITCH = BLOCK + CORRIDOR;
@@ -60,17 +64,80 @@ const typeGeo = CAR_TYPES.map((t) => bufGeo(buildCarType(t)));
 const carColors = CAR_COLORS.map((c) => new THREE.Color(c[0], c[1], c[2]));
 const pedGeo = bufGeo(buildPed());
 
-// endless ground, centred on the player
-const groundPlane = new THREE.Mesh(makeFlatGround(1800), groundMat);
+// endless ground (grass/scrub), centred on the player
+const groundPlane = new THREE.Mesh(makeFlatGround(2000), groundMat);
 scene.add(groundPlane);
 function makeFlatGround(size) {
   const g = new THREE.PlaneGeometry(size, size);
   g.rotateX(-Math.PI / 2);
   const n = g.attributes.position.count;
   const col = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) { col[i * 3] = 0.165; col[i * 3 + 1] = 0.14; col[i * 3 + 2] = 0.11; }
+  for (let i = 0; i < n; i++) { col[i * 3] = 0.17; col[i * 3 + 1] = 0.21; col[i * 3 + 2] = 0.12; } // muted grass
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
+}
+
+// ── Roads (highways) + roadside trees, rebuilt as the player moves ───────────
+const roads = buildRoads(index);
+const roadMesh = new THREE.Mesh(new THREE.BufferGeometry(), groundMat);
+roadMesh.frustumCulled = false; // absolute-coord geometry, mesh sits at origin
+worldGroup.add(roadMesh); // MUST be in the floating-origin group, not the scene
+const treeGeo = bufGeo(buildTree());
+const TREE_MAX = 320;
+const treeInst = new THREE.InstancedMesh(treeGeo, mat, TREE_MAX);
+treeInst.frustumCulled = false;
+worldGroup.add(treeInst); // same — absolute coords under the world group
+let sceneryX = 1e9;
+let sceneryZ = 1e9;
+const ROADW = 9;
+
+function rebuildScenery(px, pz) {
+  // roads within view range → one merged strip mesh (absolute coords)
+  const mb = new MeshBuilder();
+  const near = [];
+  for (const e of roads) {
+    if (segDist2(px, pz, e.ax, e.az, e.bx, e.bz) > 720 * 720) continue;
+    near.push(e);
+    let dx = e.bx - e.ax; let dz = e.bz - e.az;
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len; dz /= len;
+    const nx = -dz * ROADW * 0.5; const nz = dx * ROADW * 0.5;
+    mb.quad(
+      e.ax + nx, 0.0, e.az + nz, e.bx + nx, 0.0, e.bz + nz,
+      e.bx - nx, 0.0, e.bz - nz, e.ax - nx, 0.0, e.az - nz, ...SURFACE.asphalt,
+    );
+  }
+  roadMesh.geometry.dispose();
+  roadMesh.geometry = mb.pos.length ? bufGeo(mb.build()) : new THREE.BufferGeometry();
+
+  // trees on a coarse grid, skipping cities and roads
+  const CELL = 24;
+  let ti = 0;
+  const R = 7;
+  const ci = Math.round(px / CELL);
+  const cj = Math.round(pz / CELL);
+  for (let i = -R; i <= R && ti < TREE_MAX; i++) {
+    for (let j = -R; j <= R && ti < TREE_MAX; j++) {
+      const cx = ci + i; const cz = cj + j;
+      if (unit(hash(cx, cz, 'td')) > 0.2) continue; // ~20% of cells
+      const wx = cx * CELL + (unit(hash(cx, cz, 'tx')) - 0.5) * CELL * 0.8;
+      const wz = cz * CELL + (unit(hash(cx, cz, 'tz')) - 0.5) * CELL * 0.8;
+      if ((wx - px) ** 2 + (wz - pz) ** 2 > 168 * 168) continue;
+      let skip = false;
+      for (const e of loaded.values()) { const dx = wx - e.s.x; const dz = wz - e.s.z; if (dx * dx + dz * dz < (CITY_R[e.s.tier] + 25) ** 2) { skip = true; break; } }
+      if (!skip) for (const e of near) { if (segDist2(wx, wz, e.ax, e.az, e.bx, e.bz) < 8 * 8) { skip = true; break; } }
+      if (skip) continue;
+      tmpQ.setFromAxisAngle(UP, unit(hash(cx, cz, 'ty')) * 6.28);
+      tmpS.setScalar(0.8 + unit(hash(cx, cz, 'ts')) * 0.6);
+      tmpP.set(wx, 0, wz);
+      tmpM.compose(tmpP, tmpQ, tmpS);
+      treeInst.setMatrixAt(ti++, tmpM);
+    }
+  }
+  for (let k = ti; k < TREE_MAX; k++) { tmpM.compose(tmpP.set(0, -9999, 0), tmpQ.identity(), zeroS); treeInst.setMatrixAt(k, tmpM); }
+  tmpS.setScalar(1);
+  treeInst.instanceMatrix.needsUpdate = true;
+  sceneryX = px; sceneryZ = pz;
 }
 
 // player car (dedicated, tintable) + ped
@@ -88,8 +155,8 @@ function setPlayerCar(type, colorIdx) {
 }
 
 // ── Ambient life ─────────────────────────────────────────────────────────────
-const PED_N = 90;
-const CAR_N = 22;
+const PED_N = 72;
+const CAR_N = 8;
 const ambient = new Ambient(PED_N, CAR_N, 12345);
 const pedInst = new THREE.InstancedMesh(pedGeo, mat, PED_N);
 pedInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -321,15 +388,20 @@ function frame(now) {
   last = now;
   while (acc >= DT) {
     readInput();
+    const viewYaw = mode === 'drive' ? car.yaw : ped.yaw;
+    ambient.update(activeX(), activeZ(), viewYaw, DT);
     if (mode === 'drive') {
       stepCar(car, input, DT);
       resolveCollision(car, grid, 0.95, 1.4);
       resolveCollision(car, grid, 0.95, -1.4);
+      resolveAgents(car, ambient.cars, 1.4); // solid traffic
+      resolveAgents(car, ambient.peds, 1.4); // solid pedestrians
     } else {
       stepPed(ped, input, DT);
       resolveCollision(ped, grid, 0.5);
+      resolveAgents(ped, ambient.peds, 0.4);
+      resolveAgents(ped, ambient.cars, 0.4);
     }
-    ambient.update(activeX(), activeZ(), DT);
     acc -= DT;
   }
 
@@ -344,6 +416,8 @@ function frame(now) {
     if (c) ambient.setCity(c.x, c.z, CITY_R[c.tier], nearIn(c, ax, az));
     else ambient.setCity(0, 0, 0, false);
   }
+  // rebuild roads + trees when the player has driven a chunk
+  if ((ax - sceneryX) ** 2 + (az - sceneryZ) ** 2 > 150 * 150) rebuildScenery(ax, az);
 
   const alpha = acc / DT;
   carMesh.position.set(car.x, 0, car.z);
@@ -383,7 +457,7 @@ function renderAmbient() {
     const p = ambient.peds[i];
     if (p.live) {
       tmpQ.setFromAxisAngle(UP, p.yaw);
-      tmpP.set(p.x, 0.12 + Math.abs(Math.sin(p.bob)) * 0.05, p.z);
+      tmpP.set(p.rx, 0.12 + Math.abs(Math.sin(p.bob)) * 0.05, p.rz);
       tmpM.compose(tmpP, tmpQ, tmpS);
     } else {
       tmpM.compose(tmpP.set(0, -9999, 0), tmpQ.identity(), zeroS);
@@ -399,7 +473,7 @@ function renderAmbient() {
     const im = trafficInst[c.type];
     const k = counts[c.type]++;
     tmpQ.setFromAxisAngle(UP, c.yaw);
-    tmpP.set(c.x, 0, c.z);
+    tmpP.set(c.rx, 0, c.rz);
     tmpM.compose(tmpP, tmpQ, tmpS);
     im.setMatrixAt(k, tmpM);
     im.setColorAt(k, carColors[c.color]);
@@ -491,4 +565,14 @@ window.addEventListener('resize', resize);
 
 spawnAt(startMetro());
 resize();
+if (typeof window !== 'undefined') window.__dbg = {
+  get car() { return car; }, get mode() { return mode; }, get input() { return input; }, ambient, roads,
+  teleport(x, z, yaw) {
+    car.x = x; car.z = z; car.yaw = yaw ?? 0; car.vx = 0; car.vz = 0; car.speed = 0;
+    car.prevX = x; car.prevZ = z; car.prevYaw = car.yaw;
+    renderOrigin.x = x; renderOrigin.z = z; worldGroup.position.set(-x, 0, -z);
+    mode = 'drive';
+    updateStreaming(x, z); rebuildScenery(x, z); camReady = false; acc = 0;
+  },
+};
 requestAnimationFrame(frame);
