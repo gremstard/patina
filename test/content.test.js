@@ -10,6 +10,18 @@ import { buildCarType, CAR_TYPES, CAR_COLORS } from '../src/render/car.js';
 import { Ambient } from '../src/sim/ambient.js';
 import { buildRoads } from '../src/worldgen/roads.js';
 import { generateWorldIndex } from '../src/worldgen/worldIndex.js';
+import { generateInterior } from '../src/worldgen/interior.js';
+
+test('every interior type generates a walled room with collision, deterministically', () => {
+  for (const type of ['office', 'shop', 'apartment', 'house', 'bank']) {
+    const a = generateInterior(4242, type);
+    const b = generateInterior(4242, type);
+    assert.ok(a.positions.length > 0 && a.indices.length % 3 === 0, `${type} geometry`);
+    assert.ok(a.colliders.length >= 4, `${type} needs walls to collide with`);
+    assert.ok(a.spawn && a.exit && a.size.W > 0, `${type} has spawn/exit/size`);
+    assert.deepEqual(Array.from(a.indices.slice(0, 40)), Array.from(b.indices.slice(0, 40)), `${type} deterministic`);
+  }
+});
 
 test('the highway network is a spanning tree over every labelled settlement', () => {
   const index = generateWorldIndex(8829);

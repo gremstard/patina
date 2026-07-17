@@ -15,7 +15,8 @@ import { buildPed } from '../src/render/ped.js';
 import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx.js';
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
-import { buildColliderGrid, resolveCollision, resolveAgents, nearestParked, pointBlocked } from '../src/sim/collision.js';
+import { buildColliderGrid, resolveCollision, resolveAgents, nearestParked, nearestDoor, pointBlocked } from '../src/sim/collision.js';
+import { generateInterior } from '../src/worldgen/interior.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
 import { Ambient } from '../src/sim/ambient.js';
 import { buildRoads, segDist2 } from '../src/worldgen/roads.js';
@@ -42,12 +43,20 @@ const sun = new THREE.DirectionalLight(0xffe1b0, 1.9);
 sun.position.set(-0.5, 0.9, 0.4);
 scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xacc0d6, 0x3a352c, 0.95));
-scene.add(new THREE.AmbientLight(0xffffff, 0.26));
+const ambLight = new THREE.AmbientLight(0xffffff, 0.26);
+scene.add(ambLight);
 
 const mat = makeCityMaterial();
 const groundMat = makeGroundMaterial();
+const interiorMat = makeGroundMaterial(); // non-snapped, for close-up interiors
 const worldGroup = new THREE.Group();
 scene.add(worldGroup);
+const interiorGroup = new THREE.Group(); // a separate loaded cell (§17), at origin
+interiorGroup.visible = false;
+scene.add(interiorGroup);
+let interiorMesh = null;
+let interiorGrid = null;
+let returnDoor = null;
 const renderOrigin = { x: 0, z: 0 };
 
 function bufGeo(d) {
@@ -187,8 +196,13 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 function rebuildGrid() {
   const all = [];
-  for (const e of loaded.values()) for (const c of e.colliders) all.push(c);
+  const alld = [];
+  for (const e of loaded.values()) {
+    for (const c of e.colliders) all.push(c);
+    for (const d of e.doors) alld.push(d);
+  }
   grid = buildColliderGrid(all);
+  doorGrid = buildColliderGrid(alld);
 }
 
 function loadCity(s) {
@@ -234,7 +248,10 @@ function loadCity(s) {
     worldGroup.add(im);
     meshes.push(im);
   }
-  loaded.set(s.id, { s, meshes, colliders });
+  const doorRecs = city.doors.map((d) => ({
+    x: s.x + d.x, z: s.z + d.z, hw: 0.6, hd: 0.6, door: true, yaw: d.yaw, seed: d.seed, itype: d.itype,
+  }));
+  loaded.set(s.id, { s, meshes, colliders, doors: doorRecs });
   rebuildGrid();
 }
 
@@ -332,6 +349,51 @@ function toggleCar() {
   mode = 'drive'; camReady = false;
 }
 
+// ── Enter / exit a building (interiors, §17 — a separate loaded cell) ─────────
+let promptDoor = null;
+function enterBuilding() {
+  if (mode !== 'foot' || !promptDoor) return;
+  const door = promptDoor;
+  const it = generateInterior(door.seed, door.itype);
+  if (interiorMesh) { interiorMesh.geometry.dispose(); interiorGroup.remove(interiorMesh); }
+  interiorMesh = new THREE.Mesh(bufGeo(it), interiorMat);
+  interiorGroup.add(interiorMesh);
+  interiorGrid = buildColliderGrid(it.colliders);
+  it.colliders.exit = it.exit; // stash for exit trigger
+  interiorGroup.userData.exit = it.exit;
+  interiorGroup.userData.label = it.label;
+  // remember where to drop the player back outside
+  returnDoor = { x: door.x, z: door.z, yaw: door.yaw };
+  // move the player into the room (room-local coords)
+  worldGroup.remove(pedMesh);
+  interiorGroup.add(pedMesh);
+  ped.x = it.spawn.x; ped.z = it.spawn.z; ped.yaw = it.spawn.yaw;
+  ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
+  worldGroup.visible = false;
+  groundPlane.visible = false;
+  interiorGroup.visible = true;
+  scene.fog.far = 70; // tighter fog indoors
+  ambLight.intensity = 0.75; // interiors are lit
+  mode = 'interior'; camReady = false; promptDoor = null;
+  $('s-near2').textContent = it.label;
+}
+function exitBuilding() {
+  if (mode !== 'interior') return;
+  interiorGroup.remove(pedMesh);
+  worldGroup.add(pedMesh);
+  interiorGroup.visible = false;
+  worldGroup.visible = true;
+  groundPlane.visible = true;
+  scene.fog.far = FOG_FAR;
+  ambLight.intensity = 0.26;
+  // drop the player back outside, at the door
+  ped.x = returnDoor.x; ped.z = returnDoor.z; ped.yaw = returnDoor.yaw + Math.PI;
+  ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
+  renderOrigin.x = ped.x; renderOrigin.z = ped.z; worldGroup.position.set(-ped.x, 0, -ped.z);
+  updateStreaming(ped.x, ped.z);
+  mode = 'foot'; camReady = false;
+}
+
 // ── Sim loop ─────────────────────────────────────────────────────────────────
 const DT = 1 / 60;
 let acc = 0;
@@ -351,7 +413,11 @@ const keys = new Set();
 const PREVENT = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
 window.addEventListener('keydown', (e) => {
   if (PREVENT[e.code]) e.preventDefault();
-  if (!keys.has(e.code)) { if (e.code === 'KeyE') toggleCar(); if (e.code === 'KeyM') toggleMap(); }
+  if (!keys.has(e.code)) {
+    if (e.code === 'KeyE') toggleCar();
+    if (e.code === 'KeyF') mode === 'interior' ? exitBuilding() : enterBuilding();
+    if (e.code === 'KeyM') toggleMap();
+  }
   keys.add(e.code);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -362,17 +428,16 @@ function readInput() {
   input.steer = (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
   input.run = keys.has('ShiftLeft') || keys.has('ShiftRight');
 }
-function placeCamera(x, z, yaw, dist, height) {
+function placeCamera(x, z, yaw, dist, height, cg, ox, oz) {
   if (!camReady) camYaw = yaw;
   else { let d = yaw - camYaw; if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2; camYaw += d * 0.07; }
   fwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
-  // pull the camera in if a wall is between it and the player, so it never clips
-  // through a building (march back from the player in world space)
-  const pwx = x + renderOrigin.x;
-  const pwz = z + renderOrigin.z;
+  // pull the camera in if a wall is between it and the player (no clipping)
+  const pwx = x + ox;
+  const pwz = z + oz;
   let clear = dist;
   for (let d = 1.2; d <= dist; d += 0.8) {
-    if (pointBlocked(grid, pwx - fwd.x * d, pwz - fwd.z * d, 0.6)) { clear = Math.max(2.2, d - 1.0); break; }
+    if (pointBlocked(cg, pwx - fwd.x * d, pwz - fwd.z * d, 0.6)) { clear = Math.max(1.8, d - 1.0); break; }
   }
   const tx = x - fwd.x * clear; const tz = z - fwd.z * clear;
   if (!camReady) { camPos.set(tx, height, tz); camReady = true; }
@@ -388,21 +453,42 @@ function frame(now) {
   last = now;
   while (acc >= DT) {
     readInput();
-    const viewYaw = mode === 'drive' ? car.yaw : ped.yaw;
-    ambient.update(activeX(), activeZ(), viewYaw, DT);
-    if (mode === 'drive') {
-      stepCar(car, input, DT);
-      resolveCollision(car, grid, 0.95, 1.4);
-      resolveCollision(car, grid, 0.95, -1.4);
-      resolveAgents(car, ambient.cars, 1.4); // solid traffic
-      resolveAgents(car, ambient.peds, 1.4); // solid pedestrians
-    } else {
+    if (mode === 'interior') {
       stepPed(ped, input, DT);
-      resolveCollision(ped, grid, 0.5);
-      resolveAgents(ped, ambient.peds, 0.4);
-      resolveAgents(ped, ambient.cars, 0.4);
+      resolveCollision(ped, interiorGrid, 0.4);
+    } else {
+      const viewYaw = mode === 'drive' ? car.yaw : ped.yaw;
+      ambient.update(activeX(), activeZ(), viewYaw, DT);
+      if (mode === 'drive') {
+        stepCar(car, input, DT);
+        resolveCollision(car, grid, 0.95, 1.4);
+        resolveCollision(car, grid, 0.95, -1.4);
+        resolveAgents(car, ambient.cars, 1.4); // solid traffic
+        resolveAgents(car, ambient.peds, 1.4); // solid pedestrians
+      } else {
+        stepPed(ped, input, DT);
+        resolveCollision(ped, grid, 0.5);
+        resolveAgents(ped, ambient.peds, 0.4);
+        resolveAgents(ped, ambient.cars, 0.4);
+      }
     }
     acc -= DT;
+  }
+  const alpha = acc / DT;
+
+  // ── interior: a separate cell at the origin, no world/agents ───────────────
+  if (mode === 'interior') {
+    interpPed(ped, alpha, rp);
+    pedMesh.visible = true;
+    pedMesh.position.set(rp.x, 0, rp.z);
+    pedMesh.rotation.y = rp.yaw;
+    placeCamera(rp.x, rp.z, rp.yaw, 5.0, 2.8, interiorGrid, 0, 0);
+    const ex = interiorGroup.userData.exit;
+    promptDoor = ex && Math.hypot(ped.x - ex.x, ped.z - ex.z) < 2.4 ? 'leave' : null;
+    post.render(scene, camera);
+    updateHud();
+    requestAnimationFrame(frame);
+    return;
   }
 
   const ax = activeX(); const az = activeZ();
@@ -416,10 +502,8 @@ function frame(now) {
     if (c) ambient.setCity(c.x, c.z, CITY_R[c.tier], nearIn(c, ax, az));
     else ambient.setCity(0, 0, 0, false);
   }
-  // rebuild roads + trees when the player has driven a chunk
   if ((ax - sceneryX) ** 2 + (az - sceneryZ) ** 2 > 150 * 150) rebuildScenery(ax, az);
 
-  const alpha = acc / DT;
   carMesh.position.set(car.x, 0, car.z);
   carMesh.rotation.y = car.yaw;
   let rx; let rz;
@@ -428,15 +512,17 @@ function frame(now) {
     carMesh.position.set(rc.x, 0, rc.z); carMesh.rotation.y = rc.yaw;
     pedMesh.visible = false;
     rx = rc.x - renderOrigin.x; rz = rc.z - renderOrigin.z;
-    placeCamera(rx, rz, rc.yaw, 8.5, 3.6);
+    placeCamera(rx, rz, rc.yaw, 8.5, 3.6, grid, renderOrigin.x, renderOrigin.z);
+    promptDoor = null;
   } else {
     interpPed(ped, alpha, rp);
     pedMesh.visible = true;
     pedMesh.position.set(rp.x, 0, rp.z); pedMesh.rotation.y = rp.yaw;
     rx = rp.x - renderOrigin.x; rz = rp.z - renderOrigin.z;
-    placeCamera(rx, rz, rp.yaw, 5.5, 3.1);
+    placeCamera(rx, rz, rp.yaw, 5.5, 3.1, grid, renderOrigin.x, renderOrigin.z);
     const dOwn = Math.hypot(car.x - ped.x, car.z - ped.z);
     promptCar = dOwn < 4.4 || !!nearestParked(grid, ped.x, ped.z, 4.4);
+    promptDoor = nearestDoor(doorGrid, ped.x, ped.z, 2.4);
   }
   groundPlane.position.set(rx, -0.12, rz);
   renderAmbient();
@@ -491,25 +577,38 @@ function renderAmbient() {
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
 function updateHud() {
-  $('s-pos').textContent = `${(activeX() / 1000).toFixed(1)}, ${(activeZ() / 1000).toFixed(1)} km`;
+  const inside = mode === 'interior';
+  const wx = inside && returnDoor ? returnDoor.x : activeX();
+  const wz = inside && returnDoor ? returnDoor.z : activeZ();
+  $('s-pos').textContent = `${(wx / 1000).toFixed(1)}, ${(wz / 1000).toFixed(1)} km`;
   const spd = mode === 'drive' ? Math.abs(car.speed * 3.6).toFixed(0) : '0';
   $('s-speed').textContent = spd; $('s-speed2').textContent = spd;
   $('s-loaded').textContent = loaded.size;
   let live = 0;
   for (const p of ambient.peds) if (p.live) live++;
-  $('s-people').textContent = live;
-  $('s-mode').textContent = mode === 'drive' ? 'driving' : 'on foot';
-  $('prompt').style.opacity = mode === 'foot' && promptCar ? '1' : '0';
-  const n = nearestLabelled(index, activeX(), activeZ());
+  $('s-people').textContent = inside ? 0 : live;
+  $('s-mode').textContent = mode === 'drive' ? 'driving' : inside ? 'indoors' : 'on foot';
+
+  let ph = '';
+  if (inside) { if (promptDoor) ph = '<kbd>F</kbd> leave'; }
+  else if (mode === 'foot') {
+    if (promptDoor) ph = `<kbd>F</kbd> enter ${promptDoor.itype}`;
+    else if (promptCar) ph = '<kbd>E</kbd> get in';
+  }
+  const pr = $('prompt');
+  if (ph) pr.innerHTML = ph;
+  pr.style.opacity = ph ? '1' : '0';
+
+  const n = nearestLabelled(index, wx, wz);
   if (n) {
     const here = n.dist < 30;
     $('s-near').textContent = here ? `${n.s.name} (here)` : `${n.s.name} · ${(n.dist / 1000).toFixed(1)} km`;
-    $('s-near2').textContent = here ? `${n.s.name}` : `${n.s.name} · ${(n.dist / 1000).toFixed(1)} km`;
-    const bearing = Math.atan2(n.s.x - activeX(), n.s.z - activeZ());
+    if (!inside) $('s-near2').textContent = here ? `${n.s.name}` : `${n.s.name} · ${(n.dist / 1000).toFixed(1)} km`;
+    const bearing = Math.atan2(n.s.x - wx, n.s.z - wz);
     $('compass').style.transform = `rotate(${bearing - (mode === 'drive' ? car.yaw : ped.yaw)}rad)`;
-    $('compass').style.opacity = here ? '0.25' : '1';
+    $('compass').style.opacity = here || inside ? '0.25' : '1';
   }
-  drawMap();
+  drawMap(wx, wz);
 }
 
 // ── Minimap + fast travel ────────────────────────────────────────────────────
@@ -529,7 +628,7 @@ mapCanvas.addEventListener('click', (e) => {
   }
   if (best) { spawnAt(best); toggleMap(); }
 });
-function drawMap() {
+function drawMap(wx = activeX(), wz = activeZ()) {
   const W = mapCanvas.width;
   const s = W / WORLD_M;
   const toX = (x) => (x + HALF_WORLD_M) * s;
@@ -544,7 +643,7 @@ function drawMap() {
     mctx.fillStyle = CULT[st.culture] || '#8593a0';
     mctx.fillRect(toX(st.x) - sz / 2, toZ(st.z) - sz / 2, sz, sz);
   }
-  const px = toX(activeX()); const pz = toZ(activeZ());
+  const px = toX(wx); const pz = toZ(wz);
   mctx.fillStyle = '#f0d9c2';
   mctx.beginPath(); mctx.arc(px, pz, 2.5, 0, Math.PI * 2); mctx.fill();
   const yaw = mode === 'drive' ? car.yaw : ped.yaw;
@@ -574,5 +673,13 @@ if (typeof window !== 'undefined') window.__dbg = {
     mode = 'drive';
     updateStreaming(x, z); rebuildScenery(x, z); camReady = false; acc = 0;
   },
+  enterNearest() {
+    if (mode === 'drive') { mode = 'foot'; ped.x = car.x - 2.6; ped.z = car.z; }
+    const d = nearestDoor(doorGrid, ped.x, ped.z, 1e9);
+    if (!d) return null;
+    ped.x = d.x; ped.z = d.z; promptDoor = d; enterBuilding();
+    return d.itype;
+  },
+  exitBuilding: () => exitBuilding(),
 };
 requestAnimationFrame(frame);

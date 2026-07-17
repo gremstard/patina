@@ -204,3 +204,28 @@ export function nearestParked(cg, x, z, radius) {
   }
   return best;
 }
+
+// Nearest building door within `radius` (door records carry door:true). Used for
+// the "enter building" prompt.
+export function nearestDoor(cg, x, z, radius) {
+  const { grid, cell } = cg;
+  const ci = Math.floor(x / cell);
+  const cj = Math.floor(z / cell);
+  let best = null;
+  let bestD = radius * radius;
+  for (let i = ci - 1; i <= ci + 1; i++) {
+    for (let j = cj - 1; j <= cj + 1; j++) {
+      const arr = grid.get(key(i, j));
+      if (!arr) continue;
+      for (let n = 0; n < arr.length; n++) {
+        const c = arr[n];
+        if (!c.door) continue;
+        const dx = c.x - x;
+        const dz = c.z - z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD) { bestD = d2; best = c; }
+      }
+    }
+  }
+  return best;
+}

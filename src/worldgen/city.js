@@ -24,17 +24,80 @@ const INNER = BLOCK - 2 * SIDEWALK; // 55 m
 
 const floorsOf = (r, seed) => r.floors[0] + (hash(seed, 'fl') % (r.floors[1] - r.floors[0] + 1));
 
-// Place one building mass with its roof. fw/fd = footprint (already set back).
-// Records an axis-aligned collider (footprint) for the driving sim.
-function placeBuilding(mb, col, cx, cz, fw, fd, floors, roofType, palette, seed, maxH) {
+// A window (or door) quad proud of a facade, with the outward normal so it isn't
+// backface-culled. face: 0 +x, 1 +z, 2 -x, 3 -z.
+function panel(mb, x, y, z, face, w, h, col) {
+  const hw = w / 2;
+  const hh = h / 2;
+  if (face === 0) mb.quad(x, y - hh, z + hw, x, y - hh, z - hw, x, y + hh, z - hw, x, y + hh, z + hw, ...col);
+  else if (face === 2) mb.quad(x, y - hh, z - hw, x, y - hh, z + hw, x, y + hh, z + hw, x, y + hh, z - hw, ...col);
+  else if (face === 1) mb.quad(x - hw, y - hh, z, x + hw, y - hh, z, x + hw, y + hh, z, x - hw, y + hh, z, ...col);
+  else mb.quad(x + hw, y - hh, z, x - hw, y - hh, z, x - hw, y + hh, z, x + hw, y + hh, z, ...col);
+}
+
+// A sparse, representative set of windows on the four facades — enough to read
+// as "windows" through 100 m of fog without exploding the merged-mesh triangle
+// count / generation time (a whole metro is 9k buildings; full grids cost 7 s).
+// Full window detail is a job for the Web-Worker streaming path (hard rule 5).
+function facadeWindows(mb, cx, cz, fw, fd, floors) {
+  const rows = Math.min(floors, 5);
+  const perSide = 2; // at most two windows per facade per floor
+  const nz = Math.min(perSide, Math.max(1, Math.round(fd / 7)));
+  const nx = Math.min(perSide, Math.max(1, Math.round(fw / 7)));
+  for (let f = 0; f < rows; f++) {
+    const y = f * FLOOR + 1.3;
+    for (let k = 0; k < nz; k++) {
+      const z = cz - fd / 2 + (k + 0.5) * (fd / nz);
+      panel(mb, cx + fw / 2 + 0.03, y, z, 0, 1.0, 1.3, SURFACE.window);
+      panel(mb, cx - fw / 2 - 0.03, y, z, 2, 1.0, 1.3, SURFACE.window);
+    }
+    for (let k = 0; k < nx; k++) {
+      const x = cx - fw / 2 + (k + 0.5) * (fw / nx);
+      panel(mb, x, y, cz + fd / 2 + 0.03, 1, 1.0, 1.3, SURFACE.window);
+      panel(mb, x, y, cz - fd / 2 - 0.03, 3, 1.0, 1.3, SURFACE.window);
+    }
+  }
+}
+
+const OUTDX = [1, 0, -1, 0];
+const OUTDZ = [0, 1, 0, -1];
+// Which interior a door leads to, from the building's lot type. Banks are rare.
+function interiorType(lot, seed) {
+  if (lot === 'office') return unit(hash(seed, 'bank')) < 0.06 ? 'bank' : 'office';
+  if (lot === 'store' || lot === 'mainstreet') return unit(hash(seed, 'bank')) < 0.05 ? 'bank' : 'shop';
+  if (lot === 'apartment') return 'apartment';
+  return 'house';
+}
+
+// Door on the facade that faces the street (outward from the block centre) + an
+// interactable door record (position just outside, facing in) for interiors.
+function addDoor(mb, doors, bx, bz, cx, cz, fw, fd, seed, lot) {
+  const ox = cx - bx;
+  const oz = cz - bz;
+  const face = Math.abs(ox) >= Math.abs(oz) ? (ox >= 0 ? 0 : 2) : (oz >= 0 ? 1 : 3);
+  let dx = cx;
+  let dz = cz;
+  if (face === 0) dx = cx + fw / 2 + 0.04;
+  else if (face === 2) dx = cx - fw / 2 - 0.04;
+  else if (face === 1) dz = cz + fd / 2 + 0.04;
+  else dz = cz - fd / 2 - 0.04;
+  panel(mb, dx, 1.1, dz, face, 1.3, 2.2, SURFACE.door);
+  doors.push({
+    x: dx + OUTDX[face] * 0.9, z: dz + OUTDZ[face] * 0.9,
+    yaw: Math.atan2(-OUTDX[face], -OUTDZ[face]), // face into the building
+    seed: hash(seed, 'interior') >>> 0, itype: interiorType(lot, seed),
+  });
+}
+
+// Place one building mass with windows, a door, and its roof. fw/fd = footprint.
+function placeBuilding(mb, col, doors, bx, bz, cx, cz, fw, fd, floors, roofType, palette, seed, maxH, lot) {
   const height = floors * FLOOR;
   const wc = shade(wall(palette, hash(seed, 'w')), 0.82 + 0.4 * unit(hash(seed, 'ws')));
   mb.box(cx, height / 2, cz, fw, height, fd, wc);
   col.push({ x: cx, z: cz, hw: fw / 2, hd: fd / 2 });
+  facadeWindows(mb, cx, cz, fw, fd, floors);
+  addDoor(mb, doors, bx, bz, cx, cz, fw, fd, seed, lot);
   if (roofType === 'gable') {
-    // Pitch scales with span but is CAPPED — a wide mass must not sprout a barn
-    // roof (a 50 m footprint at 0.4 span = 20 m of ridge). Real wide-span gables
-    // are low-pitch. Cap near one floor.
     const rise = Math.min(Math.min(fw, fd) * (0.35 + 0.18 * unit(hash(seed, 'rr'))), FLOOR * 1.5);
     mb.gable(cx, height, cz, fw, fd, rise, roof(palette, hash(seed, 'r')));
     maxH.v = Math.max(maxH.v, height + rise);
@@ -82,7 +145,7 @@ function placeTree(mb, x, z, seed) {
 // Attached masses — offices, stores, apartments, main-street rows (§7 lots that
 // are NOT detached). Pack the block into a few masses with the zone's setback
 // and roof. Never gabled, so wide spans stay flat/parapet — no barn roofs.
-function massBlock(mb, col, bx, bz, r, palette, seed, maxH) {
+function massBlock(mb, col, doors, bx, bz, r, palette, seed, maxH) {
   const sb = r.setback;
   const nx = 1 + (hash(seed, 'nx') % 2);
   const nz = 1 + (hash(seed, 'nz') % 2);
@@ -98,7 +161,7 @@ function massBlock(mb, col, bx, bz, r, palette, seed, maxH) {
       // 0-setback cores share walls (tiny reveal); set-back masses pull in.
       const fw = cw - Math.max(1, 2 * sb) + (sb === 0 ? 0.5 : 0);
       const fd = cd - Math.max(1, 2 * sb) + (sb === 0 ? 0.5 : 0);
-      placeBuilding(mb, col, cx, cz, fw, fd, floorsOf(r, s), roofType, palette, s, maxH);
+      placeBuilding(mb, col, doors, bx, bz, cx, cz, fw, fd, floorsOf(r, s), roofType, palette, s, maxH, r.lot);
       n++;
     }
   }
@@ -108,7 +171,7 @@ function massBlock(mb, col, bx, bz, r, palette, seed, maxH) {
 // Detached houses — the suburb. A sparse lot grid with gabled houses; the gaps
 // ARE the density gradient. `emptyP` thins the edge more than the ring, so a
 // town's ring reads as denser houses than its cul-de-sac edge (§7).
-function houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
+function houseBlock(mb, col, doors, bx, bz, zone, r, palette, seed, maxH) {
   const grid = 3;
   const lot = INNER / grid;
   const sb = Math.min(r.setback, lot * 0.26);
@@ -122,7 +185,7 @@ function houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
       const cz = bz - INNER / 2 + lot * (b + 0.5);
       const fw = lot - 2 * sb;
       const fd = lot - 2 * sb;
-      placeBuilding(mb, col, cx, cz, fw, fd, floorsOf(r, s), 'gable', palette, s, maxH);
+      placeBuilding(mb, col, doors, bx, bz, cx, cz, fw, fd, floorsOf(r, s), 'gable', palette, s, maxH, r.lot);
       if (unit(hash(s, 'tree')) < 0.45) placeTree(mb, cx + lot * 0.32, cz + lot * 0.32, s);
       n++;
     }
@@ -133,10 +196,10 @@ function houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
 // §7: the branch is `detached`, the doc's own flag — not the zone name. Town
 // rings are detached houses; metro cores are attached towers. This is what
 // keeps a cul-de-sac and six floors from ever meeting.
-function buildBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
+function buildBlock(mb, col, doors, bx, bz, zone, r, palette, seed, maxH) {
   return r.detached
-    ? houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH)
-    : massBlock(mb, col, bx, bz, r, palette, seed, maxH);
+    ? houseBlock(mb, col, doors, bx, bz, zone, r, palette, seed, maxH)
+    : massBlock(mb, col, doors, bx, bz, r, palette, seed, maxH);
 }
 
 // Generate a whole city centred on local (0,0). `paletteKey` binds to naming
@@ -156,6 +219,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
   const N = Math.ceil(R / PITCH) + 1;
   const colliders = []; // building footprints (city space) for the driving sim
   const park = []; // parked-car spots {x,z,yaw} along the kerbs
+  const doors = []; // interactable building doors → interiors
   let blocks = 0;
   let buildings = 0;
   const zones = { core: 0, ring: 0, edge: 0 };
@@ -179,7 +243,7 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       gb.plane(bx, bz, PITCH, PITCH, -0.02, SURFACE.asphalt);
       gb.box(bx, 0.06, bz, BLOCK, 0.12, BLOCK, SURFACE.sidewalk);
 
-      buildings += buildBlock(mb, colliders, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
+      buildings += buildBlock(mb, colliders, doors, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
       placeParking(park, bx, bz, blockSeed);
     }
   }
@@ -206,8 +270,9 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
     },
     colliders,
     parking: park,
+    doors,
     stats: {
-      blocks, buildings, zones, parked: park.length,
+      blocks, buildings, zones, parked: park.length, doors: doors.length,
       triangles: geo.triangles + gnd.triangles,
       vertices: geo.vertices + gnd.vertices,
     },

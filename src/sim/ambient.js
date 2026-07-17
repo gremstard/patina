@@ -62,7 +62,7 @@ export class Ambient {
     for (let i = 0; i < carCount; i++) this.cars.push(this._blankCar());
   }
   _blankPed() { return { x: 0, z: 0, dir: 0, node: 0, cross: 0, rx: 0, rz: 0, yaw: 0, bob: 0, live: false, r: 0.45 }; }
-  _blankCar() { return { x: 0, z: 0, dir: 0, node: 0, speed: 0, cruise: 0, type: 0, color: 0, rx: 0, rz: 0, yaw: 0, live: false, r: 1.5 }; }
+  _blankCar() { return { x: 0, z: 0, dir: 0, node: 0, speed: 0, cruise: 0, type: 0, color: 0, rx: 0, rz: 0, yaw: 0, vyaw: 0, live: false, r: 1.5 }; }
 
   setCity(ox, oz, radius, active) { this.ox = ox; this.oz = oz; this.radius = radius; this.active = active; }
   inCity(x, z) { const dx = x - this.ox; const dz = z - this.oz; return dx * dx + dz * dz < this.radius * this.radius; }
@@ -96,7 +96,7 @@ export class Ambient {
   _renderCar(c) {
     c.rx = c.x + RVX[c.dir] * LANEOFF;
     c.rz = c.z + RVZ[c.dir] * LANEOFF;
-    c.yaw = DYAW[c.dir];
+    c.yaw = c.vyaw; // eased toward the heading (see update) → turns arc, not snap
   }
   _renderPed(p) { p.rx = p.x; p.rz = p.z; p.yaw = DYAW[p.dir]; }
 
@@ -111,24 +111,34 @@ export class Ambient {
         const s = this._spawn(px, pz, viewYaw, true);
         if (!s) { c.live = false; continue; }
         c.x = s.x; c.z = s.z; c.dir = s.dir; c.node = s.node; c.live = true;
-        c.cruise = 7 + r() * 7; c.speed = c.cruise;
+        c.cruise = 7 + r() * 7; c.speed = c.cruise; c.vyaw = DYAW[s.dir];
         c.type = (r() * 4) | 0; c.color = (r() * 10) | 0;
         this._renderCar(c);
         continue;
       }
-      // car-following: slow (never fully stop → no deadlock) for a car close
-      // ahead in the same lane
+      // ease the visual heading toward the grid heading (arced turns)
+      let dy = DYAW[c.dir] - c.vyaw;
+      if (dy > Math.PI) dy -= Math.PI * 2; else if (dy < -Math.PI) dy += Math.PI * 2;
+      c.vyaw += dy * Math.min(1, 9 * dt);
+      // car-following + a light yield: slow for a car close ahead in the same lane,
+      // and for any car very close (cross-traffic at an intersection → no T-bones)
       c.speed = c.cruise;
       for (let j = 0; j < this.cars.length; j++) {
         if (j === i) continue;
         const o = this.cars[j];
-        if (!o.live || o.dir !== c.dir) continue;
+        if (!o.live) continue;
         const ax = o.x - c.x; const az = o.z - c.z;
+        const d2 = ax * ax + az * az;
         const ahead = ax * DVX[c.dir] + az * DVZ[c.dir];
-        const side = ax * RVX[c.dir] + az * RVZ[c.dir];
-        if (ahead > 0.5 && ahead < 9 && Math.abs(side) < 2.4) {
-          const target = Math.max(2.4, (c.cruise * (ahead - 4)) / 5);
-          if (target < c.speed) c.speed = target;
+        if (o.dir === c.dir) {
+          const side = ax * RVX[c.dir] + az * RVZ[c.dir];
+          if (ahead > 0.5 && ahead < 9 && Math.abs(side) < 2.4) {
+            const target = Math.max(2.4, (c.cruise * (ahead - 4)) / 5);
+            if (target < c.speed) c.speed = target;
+          }
+        } else if (ahead > -1 && d2 < 7 * 7 && j < i) {
+          // a crossing car is near and has priority (lower index) → yield
+          c.speed = Math.min(c.speed, 1.5);
         }
       }
       const horiz = c.dir === 0 || c.dir === 2;

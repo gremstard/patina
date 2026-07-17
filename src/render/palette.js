@@ -37,7 +37,8 @@ export const SURFACE = {
   sidewalk: hex(0x8b9299), // light concrete — reads clearly as a sidewalk
   ground: hex(0x2a241c), // dusty dirt around the city — blends into the fog, not a green sheet
   parapet: hex(0x2a2d30),
-  window: hex(0x11161b),
+  window: hex(0x161d24),
+  door: hex(0x241a12),
   foliage: hex(0x3f5a39),
   trunk: hex(0x4a3a2c),
   pole: hex(0x2e3234),
