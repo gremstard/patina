@@ -37,6 +37,9 @@ const WATER = [0.32, 0.44, 0.52];
 const CABINET = [0.42, 0.44, 0.46];
 const PARTITION = [0.46, 0.44, 0.4];
 const SCREEN = [0.09, 0.11, 0.13];
+const TROUSER = [0.2, 0.2, 0.24];
+const SKIN = [0.62, 0.46, 0.36];
+const SHIRT = [0.32, 0.4, 0.52]; // the manager's shirt
 
 const LABEL = {
   office: 'Office', shop: 'Shop', apartment: 'Apartment', house: 'House',
@@ -97,6 +100,15 @@ function plant(mb, col, x, z) {
   mb.box(x, 0.2, z, 0.5, 0.4, 0.5, POT);
   mb.box(x, 0.85, z, 0.75, 0.9, 0.75, PLANT);
   if (col) col.push({ x, z, hw: 0.4, hd: 0.4 });
+}
+
+// a standing person (a manager you talk to). Solid, so you can't walk through.
+function person(mb, col, x, z, shirt) {
+  mb.box(x - 0.13, 0.45, z, 0.2, 0.9, 0.22, TROUSER);
+  mb.box(x + 0.13, 0.45, z, 0.2, 0.9, 0.22, TROUSER);
+  mb.box(x, 1.22, z, 0.5, 0.72, 0.3, shirt); // torso
+  mb.box(x, 1.75, z, 0.27, 0.28, 0.27, SKIN); // head
+  if (col) col.push({ x, z, hw: 0.35, hd: 0.3 });
 }
 
 // a desk with a monitor and a chair tucked in
@@ -239,19 +251,19 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     plant(mb, col, -hw + 1.4, -hd + 1.8);
   }
 
-  // A job station: a spot you can clock in and work a shift for pay. Only the
-  // working room types have one (homes/hotel-rooms don't). The stand point is
-  // clear floor beside the relevant fixture (counter / desk).
+  // A manager who hires you: talk to them to take a shift. They stand at a
+  // hiring spot distinct from any worker's station (you don't muscle in on the
+  // teller). The pay/shift comes from the room's job.
   let job = null;
   const jd = JOBS[type];
   if (jd) {
-    let jx = -hw + 3.4; let jz = -hd + 4.4; // office: at a front desk
-    if (type === 'shop') { jx = 0; jz = isGround ? -hd + 4.9 : -hd + 3.2; }
-    else if (type === 'bank') { jx = 0; jz = 2.7; } // behind the teller counter
-    else if (type === 'lobby') { jx = ex - 4.5; jz = hd - 3.0; } // in front of reception
-    job = { role: jd.role, pay: jd.pay, shift: jd.shift, x: jx, z: jz };
-    mb.box(jx, 1.05, jz, 0.5, 0.35, 0.4, SCREEN); // a little terminal marks the spot
-    mb.box(jx, 0.72, jz, 0.7, 0.7, 0.6, DESK);
+    let mx = -hw + 3.0; let mz = -hd + 3.2; // office: an HR / reception manager
+    if (type === 'shop') { mx = 0; mz = isGround ? -hd + 2.9 : -hd + 2.4; } // shopkeeper behind the counter
+    else if (type === 'bank') { mx = hw - 3.6; mz = -hd + 3.4; } // a manager's desk, NOT the teller
+    else if (type === 'lobby') { mx = ex - 4.5; mz = hd - 1.5; } // the desk clerk
+    person(mb, col, mx, mz, SHIRT);
+    if (type === 'bank') solid(mb, col, mx, 0, mz + 0.9, 1.8, 0.75, 0.7, DESK); // manager's desk
+    job = { role: jd.role, pay: jd.pay, shift: jd.shift, x: mx, z: mz };
   }
 
   // A shop counter you can buy from (the same room can also be worked).

@@ -17,9 +17,9 @@ const SEED = 1997;
 // Pinned geometry digests. Regenerate ONLY when you change the generator on
 // purpose (node -e "import('./src/worldgen/city.js')..." prints them).
 const PINNED = {
-  metro: '01ba4a9f',
-  city: '64b55b67',
-  town: 'aa45bacf',
+  metro: '1dba4727',
+  city: '97237f47',
+  town: '885fc477',
 };
 
 test('city geometry digest matches the checked-in value', () => {
@@ -45,6 +45,26 @@ test('density gradient is monotonic: metro > city > town (§7)', () => {
   // and the tally of buildings scales with tier too
   assert.ok(metro.stats.buildings > city.stats.buildings);
   assert.ok(city.stats.buildings > town.stats.buildings);
+});
+
+test('the street grid is one connected network — no stranded block islands', () => {
+  for (const tier of ['metro', 'city', 'town']) {
+    const { occ, n } = generateCity(SEED, tier, 'redbrick').streets;
+    const W = 2 * n + 1;
+    const at = (i, j) => (i < -n || i > n || j < -n || j > n ? 0 : occ[(i + n) * W + (j + n)]);
+    // BFS from the centre; every set cell must be reachable orthogonally
+    const seen = new Uint8Array(W * W);
+    const q = [[0, 0]]; seen[(0 + n) * W + (0 + n)] = 1;
+    for (let h = 0; h < q.length; h++) {
+      const [i, j] = q[h];
+      for (const [ni, nj] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+        if (at(ni, nj) && !seen[(ni + n) * W + (nj + n)]) { seen[(ni + n) * W + (nj + n)] = 1; q.push([ni, nj]); }
+      }
+    }
+    let total = 0; let reached = 0;
+    for (let k = 0; k < occ.length; k++) { if (occ[k]) { total++; if (seen[k]) reached++; } }
+    assert.equal(reached, total, `${tier}: ${total - reached} block(s) not connected to the centre by road`);
+  }
 });
 
 test('a town never sprouts a tower (§7 — no barn roofs, no downtown in a village)', () => {

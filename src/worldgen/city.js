@@ -244,23 +244,40 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
 
   const N = Math.ceil(R / PITCH) + 1;
   const W = 2 * N + 1;
-  // §7 street network: decide which blocks EXIST first (gaps = plazas/parks, plus
-  // the irregular wobbled outline), so paving and the ambient agents can respect
-  // the holes — roads connect present blocks and never stub out into a bare lot.
-  const occ = new Uint8Array(W * W);
-  const present = (i, j) => (i < -N || i > N || j < -N || j > N ? 0 : occ[(i + N) * W + (j + N)]);
+  const idx = (i, j) => (i + N) * W + (j + N);
+  // §7 street network. Two grids: `city` is every block the road grid reaches
+  // (inside the wobbled outline) — including empty lots; `built` is the subset
+  // that actually gets a building (the rest are vacant lots / parks). Roads run
+  // between adjacent CITY blocks, so an empty lot never breaks the network.
+  const cityG = new Uint8Array(W * W);
+  const built = new Uint8Array(W * W);
   for (let j = -N; j <= N; j++) {
     for (let i = -N; i <= N; i++) {
       const dist = Math.hypot(i * PITCH, j * PITCH);
       const blockSeed = hash(citySeed, i, j);
       const wobble = 0.82 + 0.34 * unit(hash(blockSeed, 'edge'));
       if (dist > R * wobble) continue;
+      cityG[idx(i, j)] = 1;
       const zone = zoneAt(tier, dist);
       const gapP = zone === 'core' ? 0.05 : zone === 'ring' ? 0.1 : 0.16;
-      if (unit(hash(blockSeed, 'gap')) < gapP) continue;
-      occ[(i + N) * W + (j + N)] = 1;
+      if (unit(hash(blockSeed, 'gap')) >= gapP) built[idx(i, j)] = 1; // else: a vacant lot
     }
   }
+  // Keep only the component connected by road to the centre, so a jagged edge
+  // can't strand a block as an unreachable island (you drive there off-road and
+  // can't get back). BFS over orthogonal neighbours from (0,0).
+  const conn = new Uint8Array(W * W);
+  const inRange = (i, j) => i >= -N && i <= N && j >= -N && j <= N;
+  const queue = [[0, 0]];
+  if (cityG[idx(0, 0)]) conn[idx(0, 0)] = 1; else queue.length = 0;
+  for (let h = 0; h < queue.length; h++) {
+    const [i, j] = queue[h];
+    const nb = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]];
+    for (const [ni, nj] of nb) {
+      if (inRange(ni, nj) && cityG[idx(ni, nj)] && !conn[idx(ni, nj)]) { conn[idx(ni, nj)] = 1; queue.push([ni, nj]); }
+    }
+  }
+  const present = (i, j) => (inRange(i, j) ? conn[idx(i, j)] : 0);
 
   const colliders = []; // building footprints (city space) for the driving sim
   const park = []; // parked-car spots {x,z,yaw} along the kerbs
@@ -268,12 +285,12 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
   let blocks = 0;
   let buildings = 0;
   const zones = { core: 0, ring: 0, edge: 0 };
-  const HB = BLOCK / 2; // kerb: asphalt reaches this far toward a GAP
+  const HB = BLOCK / 2; // kerb: asphalt reaches this far toward a GAP / the edge
   const HP = PITCH / 2; // full corridor: asphalt reaches this far toward a NEIGHBOUR
 
   for (let j = -N; j <= N; j++) {
     for (let i = -N; i <= N; i++) {
-      if (!present(i, j)) continue;
+      if (!present(i, j)) continue; // road-connected blocks only
       const bx = i * PITCH;
       const bz = j * PITCH;
       const dist = Math.hypot(bx, bz);
@@ -282,8 +299,8 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       zones[zone]++;
       blocks++;
 
-      // Pave asphalt out to the full corridor ONLY toward a present neighbour;
-      // toward a gap, stop at the kerb — so a road never runs into an empty lot.
+      // Pave the corridor toward every connected neighbour (full width), toward
+      // the edge just the kerb — so every block joins the grid, none stub out.
       const ee = present(i + 1, j) ? HP : HB;
       const ww = present(i - 1, j) ? HP : HB;
       const nn = present(i, j + 1) ? HP : HB;
@@ -295,8 +312,12 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       // a raised sidewalk slab — a real 12 cm curb you can see peds walk on.
       gb.box(bx, 0.06, bz, BLOCK, 0.12, BLOCK, SURFACE.sidewalk);
 
-      buildings += buildBlock(mb, colliders, doors, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
-      placeParking(park, bx, bz, blockSeed);
+      if (built[idx(i, j)]) {
+        buildings += buildBlock(mb, colliders, doors, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
+        placeParking(park, bx, bz, blockSeed);
+      } else if (unit(hash(blockSeed, 'park')) < 0.6) {
+        placeTree(mb, bx, bz, blockSeed); // a vacant lot with a tree reads as a pocket park
+      }
     }
   }
 
@@ -323,8 +344,8 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
     colliders,
     parking: park,
     doors,
-    // block-occupancy grid so the ambient sim keeps agents on the real streets
-    streets: { occ, n: N, pitch: PITCH },
+    // road-connected block grid so the ambient sim keeps agents on real streets
+    streets: { occ: conn, n: N, pitch: PITCH },
     stats: {
       blocks, buildings, zones, parked: park.length, doors: doors.length,
       triangles: geo.triangles + gnd.triangles,

@@ -90,6 +90,13 @@ function makeFlatGround(size) {
 
 // ── Roads (highways) + roadside trees, rebuilt as the player moves ───────────
 const roads = buildRoads(index);
+// annotate each interstate with the radius of the city at each end, so it can be
+// clipped to meet the city's outer streets instead of plunging to the centre.
+{
+  const rad = new Map();
+  for (const s of index.settlements) rad.set(`${s.x},${s.z}`, CITY_R[s.tier] || 120);
+  for (const e of roads) { e.ra = rad.get(`${e.ax},${e.az}`) || 120; e.rb = rad.get(`${e.bx},${e.bz}`) || 120; }
+}
 const roadMesh = new THREE.Mesh(new THREE.BufferGeometry(), groundMat);
 roadMesh.frustumCulled = false; // absolute-coord geometry, mesh sits at origin
 worldGroup.add(roadMesh); // MUST be in the floating-origin group, not the scene
@@ -112,10 +119,18 @@ function rebuildScenery(px, pz) {
     let dx = e.bx - e.ax; let dz = e.bz - e.az;
     const len = Math.hypot(dx, dz) || 1;
     dx /= len; dz /= len;
+    // clip the ends to ~0.85 of each city radius: the interstate meets the city's
+    // outer streets (overlapping them, so you can drive on/off) instead of running
+    // to the centre through the buildings.
+    const a = Math.min(e.ra * 0.85, len * 0.45);
+    const b = len - Math.min(e.rb * 0.85, len * 0.45);
+    if (b <= a) continue;
+    const ax = e.ax + dx * a; const az = e.az + dz * a;
+    const bx = e.ax + dx * b; const bz = e.az + dz * b;
     const nx = -dz * ROADW * 0.5; const nz = dx * ROADW * 0.5;
     mb.quad(
-      e.ax + nx, 0.0, e.az + nz, e.bx + nx, 0.0, e.bz + nz,
-      e.bx - nx, 0.0, e.bz - nz, e.ax - nx, 0.0, e.az - nz, ...SURFACE.asphalt,
+      ax + nx, 0.0, az + nz, bx + nx, 0.0, bz + nz,
+      bx - nx, 0.0, bz - nz, ax - nx, 0.0, az - nz, ...SURFACE.asphalt,
     );
   }
   roadMesh.geometry.dispose();
@@ -846,7 +861,7 @@ function updateHud() {
   const inside = mode === 'interior';
   const wx = inside && returnDoor ? returnDoor.x : activeX();
   const wz = inside && returnDoor ? returnDoor.z : activeZ();
-  $('s-pos').textContent = `${(wx / 1000).toFixed(1)}, ${(wz / 1000).toFixed(1)} km`;
+  $('s-pos').textContent = `${(wx / 1609.34).toFixed(1)}, ${(wz / 1609.34).toFixed(1)} mi`;
   const driving = mode === 'drive';
   const spd = driving ? Math.abs(car.speed * 2.23694).toFixed(0) : '0'; // m/s → mph
   $('s-speed').textContent = spd; $('s-speed2').textContent = spd;
@@ -873,7 +888,7 @@ function updateHud() {
       ph = `robbing the ${robbing.kind}… ${bar} · <kbd>R</kbd> abort`;
     } else {
       const parts = [];
-      if (promptWork) parts.push(`<kbd>E</kbd> work · ${promptWork.role} $${promptWork.pay}/shift`);
+      if (promptWork) parts.push(`<kbd>E</kbd> ask for work · ${promptWork.role} $${promptWork.pay}/shift`);
       else if (promptLift) parts.push(`<kbd>E</kbd> elevator → floor ${(interior.cur + 1) % interior.floors + 1}`);
       if (promptShop && !shopOpen) parts.push('<kbd>B</kbd> shop');
       if (promptRob) parts.push(`<kbd>R</kbd> rob the ${promptRob.kind}`);
@@ -898,8 +913,8 @@ function updateHud() {
   const n = nearestLabelled(index, wx, wz);
   if (n) {
     const here = n.dist < 30;
-    $('s-near').textContent = here ? `${n.s.name} (here)` : `${n.s.name} · ${(n.dist / 1000).toFixed(1)} km`;
-    if (!inside) $('s-near2').textContent = here ? `${n.s.name}` : `${n.s.name} · ${(n.dist / 1000).toFixed(1)} km`;
+    $('s-near').textContent = here ? `${n.s.name} (here)` : `${n.s.name} · ${(n.dist / 1609.34).toFixed(1)} mi`;
+    if (!inside) $('s-near2').textContent = here ? `${n.s.name}` : `${n.s.name} · ${(n.dist / 1609.34).toFixed(1)} mi`;
     const bearing = Math.atan2(n.s.x - wx, n.s.z - wz);
     $('compass').style.transform = `rotate(${bearing - (mode === 'drive' ? car.yaw : ped.yaw)}rad)`;
     $('compass').style.opacity = here || inside ? '0.25' : '1';
@@ -990,23 +1005,31 @@ function drawCityMap(wx, wz) {
   const toZ = (z) => W / 2 + (z - e.s.z) * s;
   const gridN = 2 * n + 1;
   const pres = (i, j) => (i < -n || i > n || j < -n || j > n ? 0 : occ[(i + n) * gridN + (j + n)]);
-  // roads first (between present neighbours), then the block footprints on top
-  mctx.strokeStyle = 'rgba(150,140,128,0.5)';
-  mctx.lineWidth = Math.max(1.5, pitch * s * 0.16);
-  mctx.beginPath();
-  for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
-    if (!pres(i, j)) continue;
-    const cx = toX(e.s.x + i * pitch); const cz = toZ(e.s.z + j * pitch);
-    if (pres(i + 1, j)) { mctx.moveTo(cx, cz); mctx.lineTo(toX(e.s.x + (i + 1) * pitch), cz); }
-    if (pres(i, j + 1)) { mctx.moveTo(cx, cz); mctx.lineTo(cx, toZ(e.s.z + (j + 1) * pitch)); }
-  }
-  mctx.stroke();
-  const bs = Math.max(2, pitch * s * 0.62);
-  mctx.fillStyle = 'rgba(120,132,142,0.85)';
+  // faint lot fills so the streets read as gaps between blocks
+  mctx.fillStyle = 'rgba(90,100,110,0.22)';
+  const bs = pitch * s * 0.82;
   for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
     if (!pres(i, j)) continue;
     mctx.fillRect(toX(e.s.x + i * pitch) - bs / 2, toZ(e.s.z + j * pitch) - bs / 2, bs, bs);
   }
+  // the streets themselves: a line down each corridor between two blocks
+  mctx.strokeStyle = '#d8b074';
+  mctx.lineWidth = Math.max(1.4, pitch * s * 0.12);
+  mctx.lineCap = 'round';
+  mctx.beginPath();
+  for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
+    if (!pres(i, j)) continue;
+    if (pres(i + 1, j)) { // vertical street on the east boundary
+      const rx = toX(e.s.x + (i + 0.5) * pitch);
+      mctx.moveTo(rx, toZ(e.s.z + (j - 0.5) * pitch)); mctx.lineTo(rx, toZ(e.s.z + (j + 0.5) * pitch));
+    }
+    if (pres(i, j + 1)) { // horizontal street on the north boundary
+      const rz = toZ(e.s.z + (j + 0.5) * pitch);
+      mctx.moveTo(toX(e.s.x + (i - 0.5) * pitch), rz); mctx.lineTo(toX(e.s.x + (i + 0.5) * pitch), rz);
+    }
+  }
+  mctx.stroke();
+  mctx.lineCap = 'butt';
   drawPlayerMark(toX(wx), toZ(wz));
 }
 function drawPlayerMark(px, pz) {
