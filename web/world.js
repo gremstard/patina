@@ -115,6 +115,35 @@ let sceneryX = 1e9;
 let sceneryZ = 1e9;
 const ROADW = 16; // interstate width — wide enough to spot across open country
 
+// a flat asphalt strip from (x1,z1) to (x2,z2)
+function roadStrip(mb, x1, z1, x2, z2, width) {
+  let dx = x2 - x1; let dz = z2 - z1;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.5) return;
+  dx /= len; dz /= len;
+  const nx = -dz * width * 0.5; const nz = dx * width * 0.5;
+  mb.quad(
+    x1 + nx, 0.0, z1 + nz, x2 + nx, 0.0, z2 + nz,
+    x2 - nx, 0.0, z2 - nz, x1 - nx, 0.0, z1 - nz, ...SURFACE.asphalt,
+  );
+}
+// the loaded city centred at (x,z), if any
+function cityAt(x, z) {
+  for (const en of loaded.values()) if (Math.abs(en.s.x - x) < 1 && Math.abs(en.s.z - z) < 1) return en;
+  return null;
+}
+// world point of the nearest paved block to (ex,ez) in a loaded city's grid
+function nearestRoadWorld(streets, cx, cz, ex, ez) {
+  const { occ, n, pitch } = streets; const gw = 2 * n + 1;
+  let best = null; let bd = Infinity;
+  for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
+    if (!occ[(i + n) * gw + (j + n)]) continue;
+    const wx = cx + i * pitch; const wz = cz + j * pitch;
+    const d = (wx - ex) ** 2 + (wz - ez) ** 2;
+    if (d < bd) { bd = d; best = [wx, wz]; }
+  }
+  return best;
+}
 function rebuildScenery(px, pz) {
   // roads within view range → one merged strip mesh (absolute coords)
   const mb = new MeshBuilder();
@@ -135,11 +164,13 @@ function rebuildScenery(px, pz) {
     // interstate branches from a real road rather than a random point.
     const [ax, az] = snapJunction(e.ax + dx * a, e.az + dz * a, e.ax, e.az);
     const [bx, bz] = snapJunction(e.ax + dx * b, e.az + dz * b, e.bx, e.bz);
-    const nx = -dz * ROADW * 0.5; const nz = dx * ROADW * 0.5;
-    mb.quad(
-      ax + nx, 0.0, az + nz, bx + nx, 0.0, bz + nz,
-      bx - nx, 0.0, bz - nz, ax - nx, 0.0, az - nz, ...SURFACE.asphalt,
-    );
+    roadStrip(mb, ax, az, bx, bz, ROADW);
+    // a connector on-ramp: link each end to the nearest real road of its city
+    // (when that city is loaded), so the interstate always joins the grid.
+    const enA = cityAt(e.ax, e.az);
+    if (enA && enA.streets) { const p = nearestRoadWorld(enA.streets, e.ax, e.az, ax, az); if (p) roadStrip(mb, ax, az, p[0], p[1], ROADW * 0.7); }
+    const enB = cityAt(e.bx, e.bz);
+    if (enB && enB.streets) { const p = nearestRoadWorld(enB.streets, e.bx, e.bz, bx, bz); if (p) roadStrip(mb, bx, bz, p[0], p[1], ROADW * 0.7); }
   }
   roadMesh.geometry.dispose();
   roadMesh.geometry = mb.pos.length ? bufGeo(mb.build()) : new THREE.BufferGeometry();
@@ -1151,6 +1182,24 @@ if (typeof window !== 'undefined') window.__dbg = {
     return interior.robbery;
   },
   get robbing() { return robbing; },
+  gotoInterstate() {
+    const e0 = nearestLoaded(activeX(), activeZ());
+    if (!e0) return null;
+    const cx = e0.s.x; const cz = e0.s.z;
+    let edge = null;
+    for (const e of roads) {
+      if (Math.hypot(e.ax - cx, e.az - cz) < 1 || Math.hypot(e.bx - cx, e.bz - cz) < 1) { edge = e; break; }
+    }
+    if (!edge) return null;
+    const outFromA = Math.hypot(edge.ax - cx, edge.az - cz) < 1;
+    const ox = outFromA ? edge.bx : edge.ax; const oz = outFromA ? edge.bz : edge.az;
+    const len = Math.hypot(ox - cx, oz - cz) || 1;
+    const dx = (ox - cx) / len; const dz = (oz - cz) / len;
+    const [jx, jz] = snapJunction(cx + dx * (CITY_R[e0.s.tier] * 0.85), cz + dz * (CITY_R[e0.s.tier] * 0.85), cx, cz);
+    const yaw = Math.atan2(dx, dz);
+    window.__dbg.teleport(jx, jz, yaw);
+    return { jx, jz };
+  },
   gotoPed() {
     if (mode !== 'foot') return null;
     let best = null; let bd = Infinity;
