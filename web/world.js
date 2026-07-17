@@ -383,6 +383,8 @@ function toggleCar() {
 // next floor. See src/worldgen/interior.js.
 let promptDoor = null;
 let promptLift = false;
+let promptWork = null; // the nearby job station, if any
+let working = null; // { job, t } while a shift is in progress
 function buildFloor(f, place) {
   const it = generateInterior(interior.seed, interior.btype, {
     w: interior.w, d: interior.d, floors: interior.floors, floor: f,
@@ -396,6 +398,8 @@ function buildFloor(f, place) {
   interior.cur = f;
   interior.elevator = it.elevator;
   interior.spawn = it.spawn;
+  interior.job = it.job;
+  working = null; // changing floors ends any shift
   // where to stand: the lift (arriving by elevator) or the door (arriving from outside)
   const at = place === 'lift' ? { x: it.elevator.x, z: it.elevator.z } : it.spawn;
   ped.x = at.x; ped.z = at.z; ped.yaw = it.spawn.yaw;
@@ -421,6 +425,23 @@ function enterBuilding() {
   ambLight.intensity = 0.92; // interiors are lit
   mode = 'interior'; camReady = false; promptDoor = null; promptLift = false;
   $('s-near2').textContent = it.label;
+}
+// Jobs — clock in at a station, work a shift (locked in place), get paid. Press
+// E again to clock out early (no pay for the unfinished shift).
+function useJobOrLift() {
+  if (mode !== 'interior') return;
+  if (working) { working = null; return; } // clock out
+  if (promptWork) { working = { job: promptWork, t: 0 }; return; }
+  useElevator();
+}
+function stepWork(dt) {
+  if (!working) return;
+  working.t += dt;
+  if (working.t >= working.job.shift) {
+    gainMoney(working.job.pay);
+    toast(`+$${working.job.pay} · ${working.job.role}`, '#8fcf7a');
+    working.t = 0; // roll straight into the next shift while you stay clocked in
+  }
 }
 function useElevator() {
   if (mode !== 'interior' || !interior || interior.floors < 2) return;
@@ -453,6 +474,7 @@ const DT = 1 / 60;
 let acc = 0;
 let last = 0;
 const input = { throttle: false, brake: false, steer: 0, run: false };
+const NO_INPUT = { throttle: false, brake: false, steer: 0, run: false };
 const rc = { x: 0, z: 0, yaw: 0, steer: 0 };
 const rp = { x: 0, z: 0, yaw: 0 };
 const camPos = new THREE.Vector3();
@@ -468,7 +490,7 @@ const PREVENT = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
 window.addEventListener('keydown', (e) => {
   if (PREVENT[e.code]) e.preventDefault();
   if (!keys.has(e.code)) {
-    if (e.code === 'KeyE') mode === 'interior' ? useElevator() : toggleCar();
+    if (e.code === 'KeyE') mode === 'interior' ? useJobOrLift() : toggleCar();
     if (e.code === 'KeyF') mode === 'interior' ? exitBuilding() : enterBuilding();
     if (e.code === 'KeyM') toggleMap();
     if (e.code === 'KeyI') toggleInv();
@@ -509,7 +531,12 @@ function frame(now) {
   while (acc >= DT) {
     readInput();
     if (mode === 'interior') {
-      stepPed(ped, input, DT);
+      if (working) {
+        // clocked in — held at the station, working the shift
+        if (input.throttle || input.brake || input.steer) working = null; // moving clocks you out
+        else stepWork(DT);
+      }
+      stepPed(ped, working ? NO_INPUT : input, DT);
       resolveCollision(ped, interiorGrid, 0.4);
     } else {
       const viewYaw = mode === 'drive' ? car.yaw : ped.yaw;
@@ -543,6 +570,8 @@ function frame(now) {
     promptDoor = interior && interior.cur === 0 && ex && Math.hypot(ped.x - ex.x, ped.z - ex.z) < 2.4 ? 'leave' : null;
     const lift = interior && interior.elevator;
     promptLift = !!(lift && interior.floors > 1 && Math.hypot(ped.x - lift.x, ped.z - lift.z) < 2.2);
+    const jb = interior && interior.job;
+    promptWork = jb && Math.hypot(ped.x - jb.x, ped.z - jb.z) < 2.2 ? jb : null;
     post.render(scene, camera);
     updateHud();
     requestAnimationFrame(frame);
@@ -661,10 +690,17 @@ function updateHud() {
 
   let ph = '';
   if (inside) {
-    const parts = [];
-    if (promptDoor) parts.push('<kbd>F</kbd> leave');
-    if (promptLift) parts.push(`<kbd>E</kbd> elevator → floor ${(interior.cur + 1) % interior.floors + 1}`);
-    ph = parts.join(' &nbsp; ');
+    if (working) {
+      const pct = Math.floor((working.t / working.job.shift) * 10);
+      const bar = '▓'.repeat(pct) + '░'.repeat(10 - pct);
+      ph = `${working.job.role} · ${bar} · <kbd>E</kbd> clock out`;
+    } else {
+      const parts = [];
+      if (promptWork) parts.push(`<kbd>E</kbd> work · ${promptWork.role} $${promptWork.pay}/shift`);
+      else if (promptLift) parts.push(`<kbd>E</kbd> elevator → floor ${(interior.cur + 1) % interior.floors + 1}`);
+      if (promptDoor) parts.push('<kbd>F</kbd> leave');
+      ph = parts.join(' &nbsp; ');
+    }
   }
   else if (mode === 'foot') {
     if (promptDoor) ph = `<kbd>F</kbd> enter ${BUILDING_LABEL[promptDoor.btype] || promptDoor.btype}`;
@@ -842,6 +878,14 @@ if (typeof window !== 'undefined') window.__dbg = {
     ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
   },
   get player() { return player; },
+  gotoJob() {
+    if (mode !== 'interior' || !interior || !interior.job) return null;
+    ped.x = interior.job.x; ped.z = interior.job.z; ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
+    return interior.job;
+  },
+  get working() { return working; },
+  get promptWork() { return promptWork; },
+  work() { useJobOrLift(); },
   gainMoney: (n) => gainMoney(n),
   giveItem: (id, name, v, q) => giveItem(id, name, v, q),
   enterType(btype) {

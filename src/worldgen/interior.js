@@ -49,6 +49,15 @@ export const BUILDING_LABEL = {
 };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
+// Jobs you can work, keyed by the room type you're standing in. pay is per shift;
+// shift is seconds of work. (Bank tellers earn most; shop work least.)
+const JOBS = {
+  office: { role: 'Computer worker', pay: 16, shift: 3.2 },
+  shop: { role: 'Shopkeeper', pay: 12, shift: 2.8 },
+  bank: { role: 'Bank teller', pay: 26, shift: 3.8 },
+  lobby: { role: 'Front desk clerk', pay: 15, shift: 3.2 },
+};
+
 // Interior floors come in a FIXED set of footprint side-lengths (multiples of the
 // 2.5 m module), so an interior is always one of a small number of sizes — easy
 // to author real floor assets for. A building's footprint snaps to the nearest.
@@ -229,6 +238,21 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     plant(mb, col, -hw + 1.4, -hd + 1.8);
   }
 
+  // A job station: a spot you can clock in and work a shift for pay. Only the
+  // working room types have one (homes/hotel-rooms don't). The stand point is
+  // clear floor beside the relevant fixture (counter / desk).
+  let job = null;
+  const jd = JOBS[type];
+  if (jd) {
+    let jx = -hw + 3.4; let jz = -hd + 4.4; // office: at a front desk
+    if (type === 'shop') { jx = 0; jz = isGround ? -hd + 4.9 : -hd + 3.2; }
+    else if (type === 'bank') { jx = 0; jz = 2.7; } // behind the teller counter
+    else if (type === 'lobby') { jx = ex - 4.5; jz = hd - 3.0; } // in front of reception
+    job = { role: jd.role, pay: jd.pay, shift: jd.shift, x: jx, z: jz };
+    mb.box(jx, 1.05, jz, 0.5, 0.35, 0.4, SCREEN); // a little terminal marks the spot
+    mb.box(jx, 0.72, jz, 0.7, 0.7, 0.6, DESK);
+  }
+
   const geo = mb.build();
   return {
     seed, type, floor: fl, floors, label: LABEL[type] || 'Room',
@@ -236,7 +260,7 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     colliders: col,
     spawn: { x: 0, z: -hd + 1.2, yaw: 0 },
     exit: { x: 0, z: -hd + 1.0 },
-    elevator,
+    elevator, job,
     size: { W, D, H },
     stats: { triangles: geo.triangles },
   };
