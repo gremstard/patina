@@ -10,7 +10,7 @@
 // Pure and worker-ready (hard rule 5): returns the transferable typed-array set
 // from MeshBuilder plus plain-data stats. No three.js, no Math.random (§0).
 
-import { CITY_R, FLOOR, BLOCK, CORRIDOR } from '../core/constants.js';
+import { CITY_R, FLOOR, BLOCK, CORRIDOR, SIDEWALK } from '../core/constants.js';
 import { hash, unit } from '../core/hash.js';
 import { zoneAt, rules } from '../core/zoning.js';
 import { MeshBuilder } from '../render/meshbuilder.js';
@@ -18,6 +18,9 @@ import { SURFACE, wall, roof, shade } from '../render/palette.js';
 
 const ROAD = CORRIDOR; // 12.5 m street corridor between blocks
 const PITCH = BLOCK + ROAD; // 72.5 m block-to-block
+// Buildings occupy the INNER block; the perimeter is a walkable sidewalk ring
+// (the light concrete you see around the buildings, where peds walk).
+const INNER = BLOCK - 2 * SIDEWALK; // 55 m
 
 const floorsOf = (r, seed) => r.floors[0] + (hash(seed, 'fl') % (r.floors[1] - r.floors[0] + 1));
 
@@ -83,14 +86,14 @@ function massBlock(mb, col, bx, bz, r, palette, seed, maxH) {
   const sb = r.setback;
   const nx = 1 + (hash(seed, 'nx') % 2);
   const nz = 1 + (hash(seed, 'nz') % 2);
-  const cw = BLOCK / nx;
-  const cd = BLOCK / nz;
+  const cw = INNER / nx;
+  const cd = INNER / nz;
   const roofType = r.roof === 'gable' ? 'flat' : r.roof; // safety: masses never gable
   let n = 0;
   for (let a = 0; a < nx; a++) {
     for (let b = 0; b < nz; b++) {
-      const cx = bx - BLOCK / 2 + cw * (a + 0.5);
-      const cz = bz - BLOCK / 2 + cd * (b + 0.5);
+      const cx = bx - INNER / 2 + cw * (a + 0.5);
+      const cz = bz - INNER / 2 + cd * (b + 0.5);
       const s = hash(seed, a, b);
       // 0-setback cores share walls (tiny reveal); set-back masses pull in.
       const fw = cw - Math.max(1, 2 * sb) + (sb === 0 ? 0.5 : 0);
@@ -107,7 +110,7 @@ function massBlock(mb, col, bx, bz, r, palette, seed, maxH) {
 // town's ring reads as denser houses than its cul-de-sac edge (§7).
 function houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
   const grid = 3;
-  const lot = BLOCK / grid;
+  const lot = INNER / grid;
   const sb = Math.min(r.setback, lot * 0.26);
   const emptyP = zone === 'edge' ? 0.34 : 0.14;
   let n = 0;
@@ -115,8 +118,8 @@ function houseBlock(mb, col, bx, bz, zone, r, palette, seed, maxH) {
     for (let b = 0; b < grid; b++) {
       const s = hash(seed, a, b);
       if (unit(hash(s, 'empty')) < emptyP) continue;
-      const cx = bx - BLOCK / 2 + lot * (a + 0.5);
-      const cz = bz - BLOCK / 2 + lot * (b + 0.5);
+      const cx = bx - INNER / 2 + lot * (a + 0.5);
+      const cz = bz - INNER / 2 + lot * (b + 0.5);
       const fw = lot - 2 * sb;
       const fd = lot - 2 * sb;
       placeBuilding(mb, col, cx, cz, fw, fd, floorsOf(r, s), 'gable', palette, s, maxH);

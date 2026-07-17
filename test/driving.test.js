@@ -48,7 +48,7 @@ function stateDigest(o) {
 }
 
 const PINNED_FREE = '8dfecad2';
-const PINNED_CITY = 'a98146cc';
+const PINNED_CITY = '7e623027';
 
 test('vehicle sim is deterministic and matches the pinned free-run trajectory', () => {
   assert.equal(stateDigest(runScript(false)), stateDigest(runScript(false)));

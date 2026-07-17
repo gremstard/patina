@@ -130,6 +130,26 @@ export function resolveCollision(body, cg, radius = 1.0, off = 0) {
   return contacts;
 }
 
+// Is world point (x,z) inside a BUILDING (not a parked car) within `margin`?
+// Used to pull the chase camera in so it doesn't clip through walls.
+export function pointBlocked(cg, x, z, margin = 0) {
+  const { grid, cell } = cg;
+  const ci = Math.floor(x / cell);
+  const cj = Math.floor(z / cell);
+  for (let i = ci - 1; i <= ci + 1; i++) {
+    for (let j = cj - 1; j <= cj + 1; j++) {
+      const arr = grid.get(key(i, j));
+      if (!arr) continue;
+      for (let n = 0; n < arr.length; n++) {
+        const b = arr[n];
+        if (b.id !== undefined) continue; // buildings only (parked cars have an id)
+        if (x > b.x - b.hw - margin && x < b.x + b.hw + margin && z > b.z - b.hd - margin && z < b.z + b.hd + margin) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Find the nearest enterable parked car to (x,z) within `radius`, using the same
 // grid. Colliders that carry an `id` (>= 0) are parked cars; buildings don't.
 // Returns the collider (with .id) or null. Allocation-free.

@@ -15,7 +15,7 @@ import { buildPed } from '../src/render/ped.js';
 import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx.js';
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
-import { buildColliderGrid, resolveCollision, nearestParked } from '../src/sim/collision.js';
+import { buildColliderGrid, resolveCollision, nearestParked, pointBlocked } from '../src/sim/collision.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
 import { Ambient } from '../src/sim/ambient.js';
 import { hash } from '../src/core/hash.js';
@@ -93,11 +93,17 @@ const CAR_N = 22;
 const ambient = new Ambient(PED_N, CAR_N, 12345);
 const pedInst = new THREE.InstancedMesh(pedGeo, mat, PED_N);
 pedInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+// Instances carry their positions in the instance matrices while the mesh sits at
+// the origin — which, under the floating-origin world group, is ~18 km from the
+// camera. Three would frustum-cull the whole crowd on the base geometry's sphere.
+// Disable culling so the agents actually render where they are.
+pedInst.frustumCulled = false;
 worldGroup.add(pedInst);
 const trafficInst = typeGeo.map((g) => {
   const im = new THREE.InstancedMesh(g, mat, CAR_N);
   im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CAR_N * 3).fill(1), 3);
+  im.frustumCulled = false;
   worldGroup.add(im);
   return im;
 });
@@ -140,6 +146,7 @@ function loadCity(s) {
     const list = byType[t];
     if (!list.length) continue;
     const im = new THREE.InstancedMesh(typeGeo[t], mat, list.length);
+    im.frustumCulled = false; // instances live far from the mesh origin (see above)
     im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
     for (let k = 0; k < list.length; k++) {
       const pk = city.parking[list[k]];
@@ -292,9 +299,17 @@ function placeCamera(x, z, yaw, dist, height) {
   if (!camReady) camYaw = yaw;
   else { let d = yaw - camYaw; if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2; camYaw += d * 0.07; }
   fwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
-  const tx = x - fwd.x * dist; const tz = z - fwd.z * dist;
+  // pull the camera in if a wall is between it and the player, so it never clips
+  // through a building (march back from the player in world space)
+  const pwx = x + renderOrigin.x;
+  const pwz = z + renderOrigin.z;
+  let clear = dist;
+  for (let d = 1.2; d <= dist; d += 0.8) {
+    if (pointBlocked(grid, pwx - fwd.x * d, pwz - fwd.z * d, 0.6)) { clear = Math.max(2.2, d - 1.0); break; }
+  }
+  const tx = x - fwd.x * clear; const tz = z - fwd.z * clear;
   if (!camReady) { camPos.set(tx, height, tz); camReady = true; }
-  else { camPos.x += (tx - camPos.x) * 0.2; camPos.z += (tz - camPos.z) * 0.2; camPos.y += (height - camPos.y) * 0.2; }
+  else { camPos.x += (tx - camPos.x) * 0.25; camPos.z += (tz - camPos.z) * 0.25; camPos.y += (height - camPos.y) * 0.2; }
   camera.position.copy(camPos);
   camAim.set(x + fwd.x * 6, 1.3, z + fwd.z * 6);
   camera.lookAt(camAim);
