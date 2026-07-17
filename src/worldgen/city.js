@@ -171,9 +171,10 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
       zones[zone]++;
       blocks++;
 
-      // asphalt tile (block + its share of the streets) then the sidewalk pad
+      // asphalt tile (block + its share of the streets), then a raised sidewalk
+      // slab — a real 12 cm curb you can see peds walk on (a plane has no edge).
       gb.plane(bx, bz, PITCH, PITCH, -0.02, SURFACE.asphalt);
-      gb.plane(bx, bz, BLOCK, BLOCK, 0.02, SURFACE.sidewalk);
+      gb.box(bx, 0.06, bz, BLOCK, 0.12, BLOCK, SURFACE.sidewalk);
 
       buildings += buildBlock(mb, colliders, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
       placeParking(park, bx, bz, blockSeed);

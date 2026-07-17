@@ -1,26 +1,25 @@
-// Patina — the world (Phase 5). Drive the full bounded 128 × 128 km world ON FOOT
-// or behind the wheel. Cities stream in on approach and are DELETED behind the
-// fog (§6, hard rule 6) — "chunks like Minecraft", keyed to settlements.
+// Patina — the world (Phase 5+). Drive/walk the full 128 × 128 km world, now
+// with varied cars and ambient life: pedestrians on the sidewalks and traffic on
+// the streets, in a bubble around you, deleted beyond the fog (§14/§16).
 //
-// Coordinates (§8): the sim runs in ABSOLUTE world metres — JS numbers are
-// float64, so no jitter at 64 km out. Floating origin is a RENDER concern only: a
-// world group offset by -renderOrigin keeps the GPU near 0.
-//
-// Your active car has a dedicated mesh so it survives its origin city unloading;
-// entering a parked street car hides that instance (the ones you leave behind
-// despawn, GTA-style).
+// Coordinates (§8): sim in absolute world metres (float64, no jitter); floating
+// origin is render-only. Cities stream in on approach, deleted behind (§6). The
+// active car survives its origin city unloading (dedicated mesh); street cars you
+// take just vanish from their instance.
 
 import * as THREE from 'three';
 import { generateWorldIndex } from '../src/worldgen/worldIndex.js';
 import { generateCity } from '../src/worldgen/city.js';
-import { buildCar } from '../src/render/car.js';
+import { buildCarType, CAR_TYPES, CAR_COLORS } from '../src/render/car.js';
 import { buildPed } from '../src/render/ped.js';
 import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx.js';
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
 import { buildColliderGrid, resolveCollision, nearestParked } from '../src/sim/collision.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
-import { FOG_FAR, BLOCK, CORRIDOR, HALF_WORLD_M, WORLD_M } from '../src/core/constants.js';
+import { Ambient } from '../src/sim/ambient.js';
+import { hash } from '../src/core/hash.js';
+import { FOG_FAR, BLOCK, CORRIDOR, HALF_WORLD_M, WORLD_M, CITY_R } from '../src/core/constants.js';
 
 const PITCH = BLOCK + CORRIDOR;
 const $ = (id) => document.getElementById(id);
@@ -56,7 +55,12 @@ function bufGeo(d) {
   return g;
 }
 
-// endless ground, centred on the player each frame
+// shared car-type geometries + the colour palette as THREE.Colors
+const typeGeo = CAR_TYPES.map((t) => bufGeo(buildCarType(t)));
+const carColors = CAR_COLORS.map((c) => new THREE.Color(c[0], c[1], c[2]));
+const pedGeo = bufGeo(buildPed());
+
+// endless ground, centred on the player
 const groundPlane = new THREE.Mesh(makeFlatGround(1800), groundMat);
 scene.add(groundPlane);
 function makeFlatGround(size) {
@@ -69,15 +73,37 @@ function makeFlatGround(size) {
   return g;
 }
 
-// player meshes (in worldGroup, positioned at absolute world coords)
-const carGeoData = buildCar();
-const carMesh = new THREE.Mesh(bufGeo(carGeoData), mat);
-const pedMesh = new THREE.Mesh(bufGeo(buildPed()), mat);
+// player car (dedicated, tintable) + ped
+const carMat = makeCityMaterial();
+let carType = 0;
+let carColorIdx = 0;
+const carMesh = new THREE.Mesh(typeGeo[0], carMat);
+const pedMesh = new THREE.Mesh(pedGeo, mat);
 worldGroup.add(carMesh);
 worldGroup.add(pedMesh);
+function setPlayerCar(type, colorIdx) {
+  carType = type; carColorIdx = colorIdx;
+  carMesh.geometry = typeGeo[type];
+  carMat.color.copy(carColors[colorIdx]);
+}
+
+// ── Ambient life ─────────────────────────────────────────────────────────────
+const PED_N = 90;
+const CAR_N = 22;
+const ambient = new Ambient(PED_N, CAR_N, 12345);
+const pedInst = new THREE.InstancedMesh(pedGeo, mat, PED_N);
+pedInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+worldGroup.add(pedInst);
+const trafficInst = typeGeo.map((g) => {
+  const im = new THREE.InstancedMesh(g, mat, CAR_N);
+  im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(CAR_N * 3).fill(1), 3);
+  worldGroup.add(im);
+  return im;
+});
 
 // ── Streaming ────────────────────────────────────────────────────────────────
-const loaded = new Map(); // id -> { s, meshes:[], colliders:[] }
+const loaded = new Map();
 let grid = buildColliderGrid([]);
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
@@ -103,26 +129,36 @@ function loadCity(s) {
   const colliders = [];
   for (const c of city.colliders) colliders.push({ x: s.x + c.x, z: s.z + c.z, hw: c.hw, hd: c.hd });
 
-  let inst = null;
-  if (city.parking.length) {
-    inst = new THREE.InstancedMesh(bufGeo(carGeoData), mat, city.parking.length);
-    for (let i = 0; i < city.parking.length; i++) {
-      const pk = city.parking[i];
+  // parked cars: assign a type + colour per spot, group into one InstancedMesh
+  // per type (per-instance colour), and remember how to hide each for enter().
+  const byType = CAR_TYPES.map(() => []);
+  for (let i = 0; i < city.parking.length; i++) {
+    const t = hash(s.id, 'ct', i) % CAR_TYPES.length;
+    byType[t].push(i);
+  }
+  for (let t = 0; t < CAR_TYPES.length; t++) {
+    const list = byType[t];
+    if (!list.length) continue;
+    const im = new THREE.InstancedMesh(typeGeo[t], mat, list.length);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
+    for (let k = 0; k < list.length; k++) {
+      const pk = city.parking[list[k]];
       tmpQ.setFromAxisAngle(UP, pk.yaw);
       tmpP.set(s.x + pk.x, 0, s.z + pk.z);
       tmpM.compose(tmpP, tmpQ, tmpS);
-      inst.setMatrixAt(i, tmpM);
+      im.setMatrixAt(k, tmpM);
+      const ci = hash(s.id, 'cc', list[k]) % carColors.length;
+      im.setColorAt(k, carColors[ci]);
       const alongZ = Math.abs(Math.cos(pk.yaw)) > 0.5;
-      // parked-car collider carries what enter() needs: which instance to hide
       colliders.push({
-        x: s.x + pk.x, z: s.z + pk.z,
-        hw: alongZ ? 0.95 : 2.1, hd: alongZ ? 2.1 : 0.95,
-        id: i, yaw: pk.yaw, inst, pidx: i, taken: false,
+        x: s.x + pk.x, z: s.z + pk.z, hw: alongZ ? 0.95 : 2.1, hd: alongZ ? 2.1 : 0.95,
+        id: list[k], yaw: pk.yaw, inst: im, pidx: k, type: t, color: ci, taken: false,
       });
     }
-    inst.instanceMatrix.needsUpdate = true;
-    worldGroup.add(inst);
-    meshes.push(inst);
+    im.instanceMatrix.needsUpdate = true;
+    im.instanceColor.needsUpdate = true;
+    worldGroup.add(im);
+    meshes.push(im);
   }
   loaded.set(s.id, { s, meshes, colliders });
   rebuildGrid();
@@ -131,7 +167,11 @@ function loadCity(s) {
 function unloadCity(id) {
   const e = loaded.get(id);
   if (!e) return;
-  for (const m of e.meshes) { worldGroup.remove(m); m.geometry.dispose(); }
+  for (const m of e.meshes) worldGroup.remove(m);
+  // meshes[0]=structures, [1]=ground own unique geometry → dispose. The rest are
+  // parked-car InstancedMeshes that reference SHARED typeGeo → never dispose those.
+  e.meshes[0].geometry.dispose();
+  e.meshes[1].geometry.dispose();
   loaded.delete(id);
   rebuildGrid();
 }
@@ -142,13 +182,22 @@ function updateStreaming(px, pz) {
   for (const s of settlementsToLoad(index, px, pz)) if (!loaded.has(s.id)) { loadCity(s); break; }
 }
 
-// ── Player state ─────────────────────────────────────────────────────────────
-const car = createCar(); // world coords; the dedicated active car
-const ped = createPed();
-let mode = 'foot'; // 'foot' | 'drive'
+// nearest loaded city (for anchoring ambient life)
+function nearestLoaded(px, pz) {
+  let best = null; let bd = Infinity;
+  for (const e of loaded.values()) {
+    const dx = e.s.x - px; const dz = e.s.z - pz; const d = dx * dx + dz * dz;
+    if (d < bd) { bd = d; best = e.s; }
+  }
+  return best;
+}
 
-function activeX() { return mode === 'drive' ? car.x : ped.x; }
-function activeZ() { return mode === 'drive' ? car.z : ped.z; }
+// ── Player state ─────────────────────────────────────────────────────────────
+const car = createCar();
+const ped = createPed();
+let mode = 'foot';
+const activeX = () => (mode === 'drive' ? car.x : ped.x);
+const activeZ = () => (mode === 'drive' ? car.z : ped.z);
 
 function spawnAt(s) {
   for (const id of [...loaded.keys()]) unloadCity(id);
@@ -156,19 +205,17 @@ function spawnAt(s) {
   const cz = s.z;
   car.x = cx; car.z = cz; car.yaw = 0; car.vx = 0; car.vz = 0; car.steer = 0; car.speed = 0;
   car.prevX = cx; car.prevZ = cz; car.prevYaw = 0; car.prevSteer = 0;
+  setPlayerCar(hash(s.id, 'pt') % CAR_TYPES.length, hash(s.id, 'pc') % carColors.length);
   renderOrigin.x = cx; renderOrigin.z = cz;
   worldGroup.position.set(-cx, 0, -cz);
   updateStreaming(cx, cz);
-  // nudge the parked car out of anything
   for (let k = 0; k < 6 && (resolveCollision(car, grid, 0.95, 1.4) + resolveCollision(car, grid, 0.95, -1.4)) > 0; k++) car.z += 6;
   car.vx = 0; car.vz = 0;
-  // stand the player just beside their car, on foot
   ped.x = car.x - 2.6; ped.z = car.z; ped.yaw = Math.PI / 2;
   ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
   mode = 'foot';
   acc = 0; camReady = false;
 }
-
 function startMetro() {
   let best = null; let bd = Infinity;
   for (const s of index.settlements) {
@@ -187,33 +234,28 @@ function hideInstance(inst, i) {
 }
 function toggleCar() {
   if (mode === 'drive') {
-    if (Math.abs(car.speed) > 2.2) return; // slow to get out
-    const rx = Math.cos(car.yaw);
-    const rz = -Math.sin(car.yaw);
+    if (Math.abs(car.speed) > 2.2) return;
+    const rx = Math.cos(car.yaw); const rz = -Math.sin(car.yaw);
     ped.x = car.x + rx * 2.6; ped.z = car.z + rz * 2.6; ped.yaw = car.yaw;
     ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
-    mode = 'foot';
-    camReady = false;
+    mode = 'foot'; camReady = false;
     return;
   }
-  // on foot: enter your own car if closest, else the nearest street car
   const dOwn = Math.hypot(car.x - ped.x, car.z - ped.z);
   const street = nearestParked(grid, ped.x, ped.z, 4.4);
   const dStreet = street ? Math.hypot(street.x - ped.x, street.z - ped.z) : Infinity;
   if (dOwn > 4.4 && !street) return;
   if (street && dStreet < dOwn) {
-    // take the street car — hide its instance, make it the active car
     street.taken = true;
     hideInstance(street.inst, street.pidx);
+    setPlayerCar(street.type, street.color);
     car.x = street.x; car.z = street.z; car.yaw = street.yaw;
     car.vx = 0; car.vz = 0; car.steer = 0; car.speed = 0;
     car.prevX = car.x; car.prevZ = car.z; car.prevYaw = car.yaw; car.prevSteer = 0;
   } else {
-    // resume your own parked car
     car.vx = 0; car.vz = 0; car.speed = 0; car.prevX = car.x; car.prevZ = car.z; car.prevYaw = car.yaw;
   }
-  mode = 'drive';
-  camReady = false;
+  mode = 'drive'; camReady = false;
 }
 
 // ── Sim loop ─────────────────────────────────────────────────────────────────
@@ -235,10 +277,7 @@ const keys = new Set();
 const PREVENT = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
 window.addEventListener('keydown', (e) => {
   if (PREVENT[e.code]) e.preventDefault();
-  if (!keys.has(e.code)) {
-    if (e.code === 'KeyE') toggleCar();
-    if (e.code === 'KeyM') toggleMap();
-  }
+  if (!keys.has(e.code)) { if (e.code === 'KeyE') toggleCar(); if (e.code === 'KeyM') toggleMap(); }
   keys.add(e.code);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -249,13 +288,11 @@ function readInput() {
   input.steer = (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
   input.run = keys.has('ShiftLeft') || keys.has('ShiftRight');
 }
-
 function placeCamera(x, z, yaw, dist, height) {
   if (!camReady) camYaw = yaw;
   else { let d = yaw - camYaw; if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2; camYaw += d * 0.07; }
   fwd.set(Math.sin(camYaw), 0, Math.cos(camYaw));
-  const tx = x - fwd.x * dist;
-  const tz = z - fwd.z * dist;
+  const tx = x - fwd.x * dist; const tz = z - fwd.z * dist;
   if (!camReady) { camPos.set(tx, height, tz); camReady = true; }
   else { camPos.x += (tx - camPos.x) * 0.2; camPos.z += (tz - camPos.z) * 0.2; camPos.y += (height - camPos.y) * 0.2; }
   camera.position.copy(camPos);
@@ -277,58 +314,101 @@ function frame(now) {
       stepPed(ped, input, DT);
       resolveCollision(ped, grid, 0.5);
     }
+    ambient.update(activeX(), activeZ(), DT);
     acc -= DT;
   }
 
-  const ax = activeX();
-  const az = activeZ();
-  const dox = ax - renderOrigin.x;
-  const doz = az - renderOrigin.z;
-  if (dox * dox + doz * doz > 500 * 500) {
+  const ax = activeX(); const az = activeZ();
+  if ((ax - renderOrigin.x) ** 2 + (az - renderOrigin.z) ** 2 > 500 * 500) {
     renderOrigin.x = ax; renderOrigin.z = az;
     worldGroup.position.set(-renderOrigin.x, 0, -renderOrigin.z);
   }
-  if ((streamTick++ % 10) === 0) updateStreaming(ax, az);
+  if ((streamTick++ % 10) === 0) {
+    updateStreaming(ax, az);
+    const c = nearestLoaded(ax, az);
+    if (c) ambient.setCity(c.x, c.z, CITY_R[c.tier], nearIn(c, ax, az));
+    else ambient.setCity(0, 0, 0, false);
+  }
 
   const alpha = acc / DT;
-  // the parked car sits at its world coords; the ped too
   carMesh.position.set(car.x, 0, car.z);
   carMesh.rotation.y = car.yaw;
+  let rx; let rz;
   if (mode === 'drive') {
     interpCar(car, alpha, rc);
-    carMesh.position.set(rc.x, 0, rc.z);
-    carMesh.rotation.y = rc.yaw;
+    carMesh.position.set(rc.x, 0, rc.z); carMesh.rotation.y = rc.yaw;
     pedMesh.visible = false;
-    const rx = rc.x - renderOrigin.x;
-    const rz = rc.z - renderOrigin.z;
-    groundPlane.position.set(rx, -0.12, rz);
+    rx = rc.x - renderOrigin.x; rz = rc.z - renderOrigin.z;
     placeCamera(rx, rz, rc.yaw, 8.5, 3.6);
   } else {
     interpPed(ped, alpha, rp);
     pedMesh.visible = true;
-    pedMesh.position.set(rp.x, 0, rp.z);
-    pedMesh.rotation.y = rp.yaw;
-    const rx = rp.x - renderOrigin.x;
-    const rz = rp.z - renderOrigin.z;
-    groundPlane.position.set(rx, -0.12, rz);
+    pedMesh.position.set(rp.x, 0, rp.z); pedMesh.rotation.y = rp.yaw;
+    rx = rp.x - renderOrigin.x; rz = rp.z - renderOrigin.z;
     placeCamera(rx, rz, rp.yaw, 5.5, 3.1);
-    // enter prompt: near your car or a street car
     const dOwn = Math.hypot(car.x - ped.x, car.z - ped.z);
     promptCar = dOwn < 4.4 || !!nearestParked(grid, ped.x, ped.z, 4.4);
   }
+  groundPlane.position.set(rx, -0.12, rz);
+  renderAmbient();
 
   post.render(scene, camera);
   updateHud();
   requestAnimationFrame(frame);
 }
 
+// helper: is (x,z) within the city radius + a margin
+function nearIn(c, x, z) {
+  const dx = x - c.x; const dz = z - c.z; const r = CITY_R[c.tier] + 40;
+  return dx * dx + dz * dz < r * r;
+}
+
+function renderAmbient() {
+  for (let i = 0; i < PED_N; i++) {
+    const p = ambient.peds[i];
+    if (p.live) {
+      tmpQ.setFromAxisAngle(UP, p.yaw);
+      tmpP.set(p.x, 0.12 + Math.abs(Math.sin(p.bob)) * 0.05, p.z);
+      tmpM.compose(tmpP, tmpQ, tmpS);
+    } else {
+      tmpM.compose(tmpP.set(0, -9999, 0), tmpQ.identity(), zeroS);
+    }
+    pedInst.setMatrixAt(i, tmpM);
+  }
+  pedInst.instanceMatrix.needsUpdate = true;
+
+  const counts = [0, 0, 0, 0];
+  for (let i = 0; i < CAR_N; i++) {
+    const c = ambient.cars[i];
+    if (!c.live) continue;
+    const im = trafficInst[c.type];
+    const k = counts[c.type]++;
+    tmpQ.setFromAxisAngle(UP, c.yaw);
+    tmpP.set(c.x, 0, c.z);
+    tmpM.compose(tmpP, tmpQ, tmpS);
+    im.setMatrixAt(k, tmpM);
+    im.setColorAt(k, carColors[c.color]);
+  }
+  for (let t = 0; t < trafficInst.length; t++) {
+    const im = trafficInst[t];
+    for (let k = counts[t]; k < CAR_N; k++) {
+      tmpM.compose(tmpP.set(0, -9999, 0), tmpQ.identity(), zeroS);
+      im.setMatrixAt(k, tmpM);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    im.instanceColor.needsUpdate = true;
+  }
+}
+
 // ── HUD ──────────────────────────────────────────────────────────────────────
 function updateHud() {
   $('s-pos').textContent = `${(activeX() / 1000).toFixed(1)}, ${(activeZ() / 1000).toFixed(1)} km`;
   const spd = mode === 'drive' ? Math.abs(car.speed * 3.6).toFixed(0) : '0';
-  $('s-speed').textContent = spd;
-  $('s-speed2').textContent = spd;
+  $('s-speed').textContent = spd; $('s-speed2').textContent = spd;
   $('s-loaded').textContent = loaded.size;
+  let live = 0;
+  for (const p of ambient.peds) if (p.live) live++;
+  $('s-people').textContent = live;
   $('s-mode').textContent = mode === 'drive' ? 'driving' : 'on foot';
   $('prompt').style.opacity = mode === 'foot' && promptCar ? '1' : '0';
   const n = nearestLabelled(index, activeX(), activeZ());
@@ -377,15 +457,10 @@ function drawMap() {
   }
   const px = toX(activeX()); const pz = toZ(activeZ());
   mctx.fillStyle = '#f0d9c2';
-  mctx.beginPath();
-  mctx.arc(px, pz, 2.5, 0, Math.PI * 2);
-  mctx.fill();
+  mctx.beginPath(); mctx.arc(px, pz, 2.5, 0, Math.PI * 2); mctx.fill();
   const yaw = mode === 'drive' ? car.yaw : ped.yaw;
   mctx.strokeStyle = '#e89a5a';
-  mctx.beginPath();
-  mctx.moveTo(px, pz);
-  mctx.lineTo(px + Math.sin(yaw) * 8, pz + Math.cos(yaw) * 8);
-  mctx.stroke();
+  mctx.beginPath(); mctx.moveTo(px, pz); mctx.lineTo(px + Math.sin(yaw) * 8, pz + Math.cos(yaw) * 8); mctx.stroke();
 }
 
 // ── Controls / resize / boot ─────────────────────────────────────────────────
