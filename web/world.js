@@ -16,7 +16,7 @@ import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
 import { buildColliderGrid, resolveCollision, resolveAgents, nearestParked, nearestDoor, pointBlocked } from '../src/sim/collision.js';
-import { generateInterior, BUILDING_LABEL } from '../src/worldgen/interior.js';
+import { generateInterior, BUILDING_LABEL, floorType } from '../src/worldgen/interior.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
 import { Ambient } from '../src/sim/ambient.js';
 import { loadPlayer, savePlayer, addMoney, spend, addItem, removeItem, countItem, itemList } from '../src/sim/player.js';
@@ -252,7 +252,7 @@ function loadCity(s) {
   }
   const doorRecs = city.doors.map((d) => ({
     x: s.x + d.x, z: s.z + d.z, hw: 0.6, hd: 0.6, door: true, yaw: d.yaw, seed: d.seed, btype: d.btype,
-    w: d.w, d: d.d, floors: d.floors,
+    w: d.w, d: d.d, floors: d.floors, sid: s.id,
   }));
   loaded.set(s.id, { s, meshes, colliders, doors: doorRecs, streets: city.streets });
   rebuildGrid();
@@ -410,9 +410,33 @@ function buildFloor(f, place) {
   ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
   return it;
 }
-function enterBuilding() {
+// A building is private (residential) if its ground floor is a home — houses and
+// apartment blocks. Those doors are locked unless it's the one you rent.
+const RENT_COST = 150;
+function isResidential(door) {
+  const t = floorType(door.btype, 0, Math.max(1, door.floors || 1));
+  return t === 'apartment' || t === 'house';
+}
+function isMyHome(door) {
+  const h = player.home;
+  return !!(h && h.sid === door.sid && Math.abs(h.x - door.x) < 1.5 && Math.abs(h.z - door.z) < 1.5);
+}
+// Can you walk through this door? Public buildings always; homes only if yours.
+function canEnter(door) { return door && (!isResidential(door) || isMyHome(door)); }
+function rentHome() {
+  const door = promptDoor;
+  if (!door || !isResidential(door) || player.home || isMyHome(door)) return;
+  if (!paySpend(RENT_COST)) { toast(`need $${RENT_COST}`, '#c0605a'); return; }
+  player.home = { sid: door.sid, x: door.x, z: door.z };
+  savePlayer(player);
+  toast('moved in — home rented', '#8fcf7a');
+  enterBuilding();
+}
+function enterBuilding(force = false) {
   if (mode !== 'foot' || !promptDoor) return;
   const door = promptDoor;
+  if (!force && !canEnter(door)) return; // locked — someone else's home
+
   interior = {
     seed: door.seed, btype: door.btype,
     w: door.w || 12, d: door.d || 10, floors: Math.max(1, door.floors || 1), cur: 0,
@@ -527,6 +551,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyM') toggleMap();
     if (e.code === 'KeyI') toggleInv();
     if (e.code === 'KeyB') { if (shopOpen) closeShop(); else if (promptShop) openShop(); }
+    if (e.code === 'KeyH' && mode === 'foot') rentHome();
     if (e.code === 'Escape' && shopOpen) closeShop();
   }
   keys.add(e.code);
@@ -742,8 +767,14 @@ function updateHud() {
     }
   }
   else if (mode === 'foot') {
-    if (promptDoor) ph = `<kbd>F</kbd> enter ${BUILDING_LABEL[promptDoor.btype] || promptDoor.btype}`;
-    else if (promptCar) ph = '<kbd>E</kbd> get in';
+    if (promptDoor) {
+      const d = promptDoor;
+      const name = BUILDING_LABEL[d.btype] || d.btype;
+      if (!isResidential(d)) ph = `<kbd>F</kbd> enter ${name}`;
+      else if (isMyHome(d)) ph = '<kbd>F</kbd> enter home';
+      else if (!player.home) ph = `🔒 <kbd>H</kbd> rent this home · $${RENT_COST}`;
+      else ph = '🔒 locked';
+    } else if (promptCar) ph = '<kbd>E</kbd> get in';
   }
   const pr = $('prompt');
   if (ph) pr.innerHTML = ph;
@@ -897,7 +928,7 @@ if (typeof window !== 'undefined') window.__dbg = {
     if (mode === 'drive') { mode = 'foot'; ped.x = car.x - 2.6; ped.z = car.z; }
     const d = nearestDoor(doorGrid, ped.x, ped.z, 1e9);
     if (!d) return null;
-    ped.x = d.x; ped.z = d.z; promptDoor = d; enterBuilding();
+    ped.x = d.x; ped.z = d.z; promptDoor = d; enterBuilding(true);
     return d.btype;
   },
   exitBuilding: () => exitBuilding(),
@@ -908,7 +939,7 @@ if (typeof window !== 'undefined') window.__dbg = {
       if (!best || (d.floors || 1) > (best.floors || 1)) best = d;
     }
     if (!best) return null;
-    ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding();
+    ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding(true);
     return { btype: best.btype, floors: best.floors, w: best.w, d: best.d };
   },
   gotoLift() {
@@ -934,6 +965,18 @@ if (typeof window !== 'undefined') window.__dbg = {
   get shopOpen() { return shopOpen; },
   get promptShop() { return promptShop; },
   openShop() { openShop(); },
+  findHome() {
+    if (mode === 'drive') { mode = 'foot'; ped.x = car.x - 2.6; ped.z = car.z; }
+    for (const e of loaded.values()) for (const d of e.doors) {
+      if (isResidential(d)) {
+        ped.x = d.x; ped.z = d.z; ped.prevX = d.x; ped.prevZ = d.z; promptDoor = d; acc = 0;
+        return { btype: d.btype, residential: true, canEnter: canEnter(d), hasHome: !!player.home };
+      }
+    }
+    return null;
+  },
+  rent() { rentHome(); },
+  get home() { return player.home; },
   gainMoney: (n) => gainMoney(n),
   giveItem: (id, name, v, q) => giveItem(id, name, v, q),
   enterType(btype) {
@@ -943,7 +986,7 @@ if (typeof window !== 'undefined') window.__dbg = {
       if (d.btype === btype && (!best || (d.floors || 1) > (best.floors || 1))) best = d;
     }
     if (!best) return null;
-    ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding();
+    ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding(true);
     return { btype: best.btype, floors: best.floors };
   },
 };

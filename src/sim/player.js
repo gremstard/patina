@@ -17,7 +17,7 @@ const STARTER = [
 ];
 
 export function createPlayer() {
-  const p = { money: START_MONEY, items: {} };
+  const p = { money: START_MONEY, items: {}, home: null };
   for (const [id, name, value] of STARTER) addItem(p, id, name, value, 1);
   return p;
 }
@@ -65,7 +65,7 @@ export function itemList(p) {
 const KEY = 'patina.player.v1';
 
 export function savePlayer(p, storage) {
-  try { (storage || globalThis.localStorage).setItem(KEY, JSON.stringify({ money: p.money, items: p.items })); } catch { /* ignore */ }
+  try { (storage || globalThis.localStorage).setItem(KEY, JSON.stringify({ money: p.money, items: p.items, home: p.home })); } catch { /* ignore */ }
 }
 
 export function loadPlayer(storage) {
@@ -74,7 +74,7 @@ export function loadPlayer(storage) {
     if (!raw) return createPlayer();
     const d = JSON.parse(raw);
     if (typeof d.money !== 'number' || typeof d.items !== 'object' || !d.items) return createPlayer();
-    return { money: Math.max(0, Math.round(d.money)), items: d.items };
+    return { money: Math.max(0, Math.round(d.money)), items: d.items, home: d.home || null };
   } catch {
     return createPlayer();
   }
