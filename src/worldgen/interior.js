@@ -37,8 +37,39 @@ const CABINET = [0.42, 0.44, 0.46];
 const PARTITION = [0.46, 0.44, 0.4];
 const SCREEN = [0.09, 0.11, 0.13];
 
-const LABEL = { office: 'Office', shop: 'Shop', apartment: 'Apartment', house: 'House', bank: 'Bank' };
+const LABEL = {
+  office: 'Office', shop: 'Shop', apartment: 'Apartment', house: 'House',
+  bank: 'Bank', hotel: 'Hotel room', lobby: 'Lobby',
+};
+// Friendly name for the whole building (used by the "enter …" prompt).
+export const BUILDING_LABEL = {
+  office: 'office', store: 'store', shop: 'shop', mixed: 'mixed-use',
+  mixed2: 'shops & flats', apartment: 'apartments', house: 'house',
+  bank: 'bank', hotel: 'hotel',
+};
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+// A building type spans several floors of different uses. Given the building
+// type and which floor you're on, what room do you actually stand in? Anything
+// that is already a plain room type (the test harness passes those) falls
+// through unchanged.
+export function floorType(btype, floor, floors) {
+  const isGround = floor === 0;
+  switch (btype) {
+    case 'store': return 'shop';
+    case 'bank': return isGround ? 'bank' : 'office';
+    case 'hotel': return isGround ? 'lobby' : 'hotel';
+    case 'apartment': return isGround && floors >= 4 ? 'lobby' : 'apartment';
+    case 'house': return 'house';
+    case 'mixed': {
+      if (isGround) return 'shop';
+      return floor <= Math.ceil(floors / 2) ? 'office' : 'apartment';
+    }
+    case 'mixed2': return isGround ? 'shop' : 'apartment';
+    case 'office': return 'office';
+    default: return btype; // already a room type
+  }
+}
 
 function solid(mb, col, x, y, z, w, h, d, color) {
   mb.box(x, y + h / 2, z, w, h, d, color);
@@ -60,18 +91,21 @@ function workstation(mb, col, x, z, face) {
   mb.box(x, 0.36, z + 0.85 * face, 0.5, 0.72, 0.5, METAL); // chair
 }
 
-// opts: { w, d, floors, floor }
-export function generateInterior(seed, type = 'house', opts = {}) {
+// opts: { w, d, floors, floor }. `btype` is the whole building's type; the room
+// you actually stand in depends on which floor it is (floorType).
+export function generateInterior(seed, btype = 'house', opts = {}) {
   seed = seed >>> 0;
   const floors = Math.max(1, opts.floors || 1);
   const fl = clamp(opts.floor || 0, 0, floors - 1);
+  const type = floorType(btype, fl, floors);
   const W = clamp(opts.w || 12, 9, 46);
   const D = clamp(opts.d || 10, 9, 46);
   const H = FLOOR_H;
   const hw = W / 2;
   const hd = D / 2;
   const t = 0.25;
-  const floorCol = type === 'apartment' || type === 'house' ? FLOOR_WOOD : FLOOR_TILE;
+  const soft = type === 'apartment' || type === 'house' || type === 'hotel';
+  const floorCol = soft ? FLOOR_WOOD : FLOOR_TILE;
   const mb = new MeshBuilder();
   const col = [];
   const R = (salt) => unit(hash(seed, fl, salt));
@@ -158,13 +192,35 @@ export function generateInterior(seed, type = 'house', opts = {}) {
     } else {
       for (let x = -hw + 3; x < hw - 2; x += 4.2) if (usable(x, 0)) solid(mb, col, x, 0, 0, 1.7, 0.75, 0.9, DESK);
     }
+  } else if (type === 'lobby') {
+    // an entrance lobby: reception desk at the back, a seating cluster, plants
+    solid(mb, col, ex - 4.5, 0, hd - 1.4, Math.min(W - 5, 6), 1.05, 1.0, COUNTER);
+    mb.plane(0, 0, Math.min(W - 4, 7), Math.min(D - 6, 6), 0.02, CARPET);
+    solid(mb, col, -hw + 2.6, 0, 0.5, 2.8, 0.7, 0.9, SOFA);
+    solid(mb, col, -hw + 2.6, 0, -2.2, 2.8, 0.7, 0.9, SOFA);
+    solid(mb, col, -hw + 2.6, 0, -0.85, 1.1, 0.45, 1.1, DESK); // coffee table
+    plant(mb, col, hw - 1.4, -hd + 1.8);
+    plant(mb, col, -hw + 1.5, hd - 1.6);
+  } else if (type === 'hotel') {
+    // a hotel room: bed(s) against the back wall, nightstand, wardrobe, TV, desk
+    const two = W >= 16;
+    const bx = two ? -hw + 3.0 : 0;
+    solid(mb, col, bx, 0, hd - 2.0, 3.0, 0.6, 2.4, BED);
+    solid(mb, col, bx - 1.9, 0, hd - 1.2, 0.7, 0.5, 0.7, WOODDK); // nightstand
+    if (two) solid(mb, col, hw - 3.0, 0, hd - 2.0, 3.0, 0.6, 2.4, BED);
+    mb.plane(bx, 0, Math.min(4, W - 3), 3, 0.02, CARPET);
+    solid(mb, col, -hw + 0.7, 0, -1, 0.6, 2.0, Math.min(D - 5, 4.5), WOODDK); // wardrobe
+    solid(mb, col, 0, 0, -hd + 2.6, 1.6, 0.75, 0.7, DESK); // desk
+    mb.box(0, 1.5, -hd + t + 0.06, 1.4, 0.85, 0.08, SCREEN); // wall-mounted TV
   } else {
-    // apartment / house — a few furnished pieces, scaled to the room
+    // apartment / house — a small home, scaled to the room
     solid(mb, col, -hw + 2.6, 0, hd - 2.0, 3.2, 0.6, 2.0, BED);
     mb.plane(-hw + 3, 0, Math.min(4, W - 3), 3, 0.02, CARPET);
-    solid(mb, col, 0, 0, -hd + 3.0, 1.8, 0.8, 1.2, DESK); // table
-    solid(mb, col, hw - 3.6, 0, hd - 1.4, 2.8, 0.8, 0.9, SOFA);
+    solid(mb, col, 0, 0, -hd + 3.0, 1.8, 0.8, 1.2, DESK); // dining table
+    solid(mb, col, hw - 3.6, 0, hd - 1.4, 2.8, 0.8, 0.9, SOFA); // sofa
     solid(mb, col, hw - 0.7, 0, -1, 0.6, 2.0, Math.min(D - 5, 5), WOODDK); // wardrobe
+    solid(mb, col, hw - 3.6, 0, -hd + 2.4, 1.2, 0.9, 1.0, SHELF); // kitchen counter
+    plant(mb, col, -hw + 1.4, -hd + 1.8);
   }
 
   const geo = mb.build();

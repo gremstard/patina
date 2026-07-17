@@ -61,12 +61,36 @@ function facadeWindows(mb, cx, cz, fw, fd, floors) {
 
 const OUTDX = [1, 0, -1, 0];
 const OUTDZ = [0, 1, 0, -1];
-// Which interior a door leads to, from the building's lot type. Banks are rare.
-function interiorType(lot, seed) {
-  if (lot === 'office') return unit(hash(seed, 'bank')) < 0.06 ? 'bank' : 'office';
-  if (lot === 'store' || lot === 'mainstreet') return unit(hash(seed, 'bank')) < 0.05 ? 'bank' : 'shop';
-  if (lot === 'apartment') return 'apartment';
-  return 'house';
+// Which KIND of building a door leads to, from the block's zoned lot type. The
+// zone gives the dominant use (a tower core is mostly offices); a per-building
+// hash sprinkles the mix real streets have — a hotel, a bank, mixed-use with
+// shops below flats. The building type drives per-floor interiors (interior.js).
+function buildingType(lot, seed) {
+  const r = unit(hash(seed, 'btype'));
+  if (lot === 'office') {
+    // downtown towers: mostly offices, some hotels/mixed-use, a rare bank
+    if (r < 0.06) return 'bank';
+    if (r < 0.20) return 'hotel';
+    if (r < 0.40) return 'mixed';   // shop / offices / flats stacked
+    if (r < 0.52) return 'apartment';
+    if (r < 0.60) return 'mixed2';  // shop below, flats above
+    return 'office';
+  }
+  if (lot === 'store' || lot === 'mainstreet') {
+    // shopping streets: mostly stores, some shop-and-flats, a rare bank/office
+    if (r < 0.06) return 'bank';
+    if (r < 0.28) return 'mixed2';
+    if (r < 0.40) return 'mixed';
+    if (r < 0.48) return 'office';
+    return 'store';
+  }
+  if (lot === 'apartment') {
+    // mid-rise ring: flats, some ground-floor shops, the odd hotel
+    if (r < 0.16) return 'mixed2';
+    if (r < 0.24) return 'hotel';
+    return 'apartment';
+  }
+  return 'house'; // the suburbs — one family, 1-2 floors
 }
 
 // Door on the facade that faces the street (outward from the block centre) + an
@@ -86,7 +110,7 @@ function addDoor(mb, doors, bx, bz, cx, cz, fw, fd, floors, seed, lot) {
   doors.push({
     x: dx + OUTDX[face] * 0.9, z: dz + OUTDZ[face] * 0.9,
     yaw: Math.atan2(-OUTDX[face], -OUTDZ[face]), // face into the building
-    seed: hash(seed, 'interior') >>> 0, itype: interiorType(lot, seed),
+    seed: hash(seed, 'interior') >>> 0, btype: buildingType(lot, seed),
     w: fw, d: fd, floors,
   });
 }

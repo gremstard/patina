@@ -16,7 +16,7 @@ import { makeCityMaterial, makeGroundMaterial, PSXPass } from '../src/render/psx
 import { createCar, stepCar, interpCar } from '../src/sim/vehicle.js';
 import { createPed, stepPed, interpPed } from '../src/sim/pedestrian.js';
 import { buildColliderGrid, resolveCollision, resolveAgents, nearestParked, nearestDoor, pointBlocked } from '../src/sim/collision.js';
-import { generateInterior } from '../src/worldgen/interior.js';
+import { generateInterior, BUILDING_LABEL } from '../src/worldgen/interior.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
 import { Ambient } from '../src/sim/ambient.js';
 import { buildRoads, segDist2 } from '../src/worldgen/roads.js';
@@ -250,7 +250,7 @@ function loadCity(s) {
     meshes.push(im);
   }
   const doorRecs = city.doors.map((d) => ({
-    x: s.x + d.x, z: s.z + d.z, hw: 0.6, hd: 0.6, door: true, yaw: d.yaw, seed: d.seed, itype: d.itype,
+    x: s.x + d.x, z: s.z + d.z, hw: 0.6, hd: 0.6, door: true, yaw: d.yaw, seed: d.seed, btype: d.btype,
     w: d.w, d: d.d, floors: d.floors,
   }));
   loaded.set(s.id, { s, meshes, colliders, doors: doorRecs });
@@ -358,7 +358,7 @@ function toggleCar() {
 let promptDoor = null;
 let promptLift = false;
 function buildFloor(f, place) {
-  const it = generateInterior(interior.seed, interior.type, {
+  const it = generateInterior(interior.seed, interior.btype, {
     w: interior.w, d: interior.d, floors: interior.floors, floor: f,
   });
   if (interiorMesh) { interiorMesh.geometry.dispose(); interiorGroup.remove(interiorMesh); }
@@ -380,7 +380,7 @@ function enterBuilding() {
   if (mode !== 'foot' || !promptDoor) return;
   const door = promptDoor;
   interior = {
-    seed: door.seed, type: door.itype,
+    seed: door.seed, btype: door.btype,
     w: door.w || 12, d: door.d || 10, floors: Math.max(1, door.floors || 1), cur: 0,
   };
   const it = buildFloor(0, 'door');
@@ -612,8 +612,10 @@ function updateHud() {
   const wx = inside && returnDoor ? returnDoor.x : activeX();
   const wz = inside && returnDoor ? returnDoor.z : activeZ();
   $('s-pos').textContent = `${(wx / 1000).toFixed(1)}, ${(wz / 1000).toFixed(1)} km`;
-  const spd = mode === 'drive' ? Math.abs(car.speed * 3.6).toFixed(0) : '0';
+  const driving = mode === 'drive';
+  const spd = driving ? Math.abs(car.speed * 2.23694).toFixed(0) : '0'; // m/s → mph
   $('s-speed').textContent = spd; $('s-speed2').textContent = spd;
+  $('speedo').style.opacity = driving ? '1' : '0'; // only shown behind the wheel
   $('s-loaded').textContent = loaded.size;
   let live = 0;
   for (const p of ambient.peds) if (p.live) live++;
@@ -632,7 +634,7 @@ function updateHud() {
     ph = parts.join(' &nbsp; ');
   }
   else if (mode === 'foot') {
-    if (promptDoor) ph = `<kbd>F</kbd> enter ${promptDoor.itype}`;
+    if (promptDoor) ph = `<kbd>F</kbd> enter ${BUILDING_LABEL[promptDoor.btype] || promptDoor.btype}`;
     else if (promptCar) ph = '<kbd>E</kbd> get in';
   }
   const pr = $('prompt');
@@ -718,7 +720,7 @@ if (typeof window !== 'undefined') window.__dbg = {
     const d = nearestDoor(doorGrid, ped.x, ped.z, 1e9);
     if (!d) return null;
     ped.x = d.x; ped.z = d.z; promptDoor = d; enterBuilding();
-    return d.itype;
+    return d.btype;
   },
   exitBuilding: () => exitBuilding(),
   enterNearestTall() {
@@ -729,14 +731,24 @@ if (typeof window !== 'undefined') window.__dbg = {
     }
     if (!best) return null;
     ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding();
-    return { itype: best.itype, floors: best.floors, w: best.w, d: best.d };
+    return { btype: best.btype, floors: best.floors, w: best.w, d: best.d };
   },
   gotoLift() {
     if (mode !== 'interior' || !interior || !interior.elevator) return;
     ped.x = interior.elevator.x; ped.z = interior.elevator.z;
     ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
   },
+  enterType(btype) {
+    if (mode === 'drive') { mode = 'foot'; ped.x = car.x - 2.6; ped.z = car.z; }
+    let best = null;
+    for (const e of loaded.values()) for (const d of e.doors) {
+      if (d.btype === btype && (!best || (d.floors || 1) > (best.floors || 1))) best = d;
+    }
+    if (!best) return null;
+    ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding();
+    return { btype: best.btype, floors: best.floors };
+  },
 };
 if (typeof window !== 'undefined') window.__interior = () =>
-  interior ? { type: interior.type, w: interior.w, d: interior.d, floors: interior.floors, cur: interior.cur } : null;
+  interior ? { btype: interior.btype, w: interior.w, d: interior.d, floors: interior.floors, cur: interior.cur } : null;
 requestAnimationFrame(frame);
