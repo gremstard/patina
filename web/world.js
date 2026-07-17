@@ -19,6 +19,7 @@ import { buildColliderGrid, resolveCollision, resolveAgents, nearestParked, near
 import { generateInterior, BUILDING_LABEL } from '../src/worldgen/interior.js';
 import { settlementsToLoad, inStreamRange, nearestLabelled } from '../src/worldgen/streaming.js';
 import { Ambient } from '../src/sim/ambient.js';
+import { loadPlayer, savePlayer, addMoney, spend, addItem, removeItem, countItem, itemList } from '../src/sim/player.js';
 import { buildRoads, segDist2 } from '../src/worldgen/roads.js';
 import { buildTree } from '../src/render/props.js';
 import { MeshBuilder } from '../src/render/meshbuilder.js';
@@ -292,6 +293,31 @@ let mode = 'foot';
 const activeX = () => (mode === 'drive' ? car.x : ped.x);
 const activeZ = () => (mode === 'drive' ? car.z : ped.z);
 
+// ── Economy: wallet + inventory (persisted) ──────────────────────────────────
+const player = loadPlayer();
+let invOpen = false;
+function renderMoney() { $('money').textContent = '$' + player.money; }
+function renderInventory() {
+  const list = itemList(player);
+  const el = $('inv-list');
+  el.innerHTML = list.length
+    ? list.map((it) => `<div class="row"><span>${it.name}</span><span class="q">×${it.qty}</span></div>`).join('')
+    : '<div class="empty">empty</div>';
+}
+let toastT = 0;
+function toast(msg, color = '#8fcf7a') {
+  const el = $('toast');
+  el.textContent = msg; el.style.color = color; el.style.opacity = '1';
+  toastT = 1.6;
+}
+// central mutators so the HUD + save always stay in sync
+function gainMoney(amt) { addMoney(player, amt); renderMoney(); toast((amt >= 0 ? '+$' : '-$') + Math.abs(amt)); savePlayer(player); }
+function paySpend(amt) { const ok = spend(player, amt); if (ok) { renderMoney(); toast('-$' + amt, '#e0b36a'); savePlayer(player); } return ok; }
+function giveItem(id, name, value, qty = 1) { addItem(player, id, name, value, qty); renderInventory(); toast('+ ' + name, '#a9c8e0'); savePlayer(player); }
+function takeItem(id, qty = 1) { const ok = removeItem(player, id, qty); if (ok) { renderInventory(); savePlayer(player); } return ok; }
+function toggleInv() { invOpen = !invOpen; $('inv').classList.toggle('open', invOpen); if (invOpen) renderInventory(); }
+renderMoney(); renderInventory();
+
 function spawnAt(s) {
   for (const id of [...loaded.keys()]) unloadCity(id);
   const cx = s.x + PITCH * 0.5;
@@ -445,6 +471,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyE') mode === 'interior' ? useElevator() : toggleCar();
     if (e.code === 'KeyF') mode === 'interior' ? exitBuilding() : enterBuilding();
     if (e.code === 'KeyM') toggleMap();
+    if (e.code === 'KeyI') toggleInv();
   }
   keys.add(e.code);
 });
@@ -613,6 +640,7 @@ function renderAmbient() {
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
 function updateHud() {
+  if (toastT > 0) { toastT -= 0.016; if (toastT <= 0) $('toast').style.opacity = '0'; }
   const inside = mode === 'interior';
   const wx = inside && returnDoor ? returnDoor.x : activeX();
   const wz = inside && returnDoor ? returnDoor.z : activeZ();
@@ -813,6 +841,9 @@ if (typeof window !== 'undefined') window.__dbg = {
     ped.x = interior.elevator.x; ped.z = interior.elevator.z;
     ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
   },
+  get player() { return player; },
+  gainMoney: (n) => gainMoney(n),
+  giveItem: (id, name, v, q) => giveItem(id, name, v, q),
   enterType(btype) {
     if (mode === 'drive') { mode = 'foot'; ped.x = car.x - 2.6; ped.z = car.z; }
     let best = null;

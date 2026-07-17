@@ -49,6 +49,12 @@ export const BUILDING_LABEL = {
 };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
+// Interior floors come in a FIXED set of footprint side-lengths (multiples of the
+// 2.5 m module), so an interior is always one of a small number of sizes — easy
+// to author real floor assets for. A building's footprint snaps to the nearest.
+export const FLOOR_SIZES = [12.5, 25, 37.5, 45]; // metres per side
+const snapSize = (v) => FLOOR_SIZES.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
+
 // A building type spans several floors of different uses. Given the building
 // type and which floor you're on, what room do you actually stand in? Anything
 // that is already a plain room type (the test harness passes those) falls
@@ -98,8 +104,8 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
   const floors = Math.max(1, opts.floors || 1);
   const fl = clamp(opts.floor || 0, 0, floors - 1);
   const type = floorType(btype, fl, floors);
-  const W = clamp(opts.w || 12, 9, 46);
-  const D = clamp(opts.d || 10, 9, 46);
+  const W = snapSize(clamp(opts.w || 12, 9, 46));
+  const D = snapSize(clamp(opts.d || 10, 9, 46));
   const H = FLOOR_H;
   const hw = W / 2;
   const hd = D / 2;
