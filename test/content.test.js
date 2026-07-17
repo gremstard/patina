@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { buildCarType, CAR_TYPES, CAR_COLORS } from '../src/render/car.js';
 import { Ambient } from '../src/sim/ambient.js';
+import { resolveAgents } from '../src/sim/collision.js';
 import { buildRoads } from '../src/worldgen/roads.js';
 import { generateWorldIndex } from '../src/worldgen/worldIndex.js';
 import { generateInterior } from '../src/worldgen/interior.js';
@@ -21,6 +22,24 @@ test('every interior type generates a walled room with collision, deterministica
     assert.ok(a.spawn && a.exit && a.size.W > 0, `${type} has spawn/exit/size`);
     assert.deepEqual(Array.from(a.indices.slice(0, 40)), Array.from(b.indices.slice(0, 40)), `${type} deterministic`);
   }
+});
+
+test('a moving body knocks pushable agents back and keeps most of its speed', () => {
+  // a fast body driving straight into an agent just ahead
+  const body = { x: 0, z: 0, vx: 0, vz: 10 };
+  const agent = { live: true, rx: 0, rz: 1.5, x: 0, z: 1.5, r: 0.45, kx: 0, kz: 0 };
+  resolveAgents(body, [agent], 1.4, 1.0);
+  assert.ok(agent.kz > 0, 'agent flung forward along the hit');
+  assert.ok(body.vz > 8, `body keeps most of its momentum, got ${body.vz}`);
+});
+
+test('an immovable agent (power 0) stops the body instead of moving', () => {
+  const body = { x: 0, z: 0, vx: 0, vz: 10 };
+  const agent = { live: true, rx: 0, rz: 1.0, x: 0, z: 1.0, r: 1.5, kx: 0, kz: 0 };
+  resolveAgents(body, [agent], 0.4, 0);
+  assert.equal(agent.kz, 0, 'agent did not move');
+  assert.ok(body.vz < 1, `body stopped at the wall, got ${body.vz}`);
+  assert.ok(body.z < 0, 'body pushed back out of penetration');
 });
 
 test('the highway network is a spanning tree over every labelled settlement', () => {

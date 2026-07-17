@@ -77,8 +77,14 @@ const POST_FRAG = /* glsl */ `
     return m[y][x] / 16.0;
   }
 
+  uniform float uBright;
+  uniform float uGamma;
+
   void main() {
     vec3 c = texture2D(tDiffuse, vUv).rgb;
+    // lift the picture before quantising: gamma brightens the midtones (where a
+    // dusty palette lives) and uBright scales overall exposure. Purely visual.
+    c = pow(c, vec3(uGamma)) * uBright;
     float d = (bayer(gl_FragCoord.xy) - 0.5) / uLevels;
     c += d;
     c = floor(c * uLevels + 0.5) / uLevels;
@@ -87,7 +93,7 @@ const POST_FRAG = /* glsl */ `
 `;
 
 export class PSXPass {
-  constructor(renderer, { internalHeight = 240, levels = 24 } = {}) {
+  constructor(renderer, { internalHeight = 240, levels = 24, bright = 1.12, gamma = 0.9 } = {}) {
     this.renderer = renderer;
     this.internalHeight = internalHeight;
     this.rt = new WebGLRenderTarget(1, 1, {
@@ -99,7 +105,10 @@ export class PSXPass {
     this.scene = new Scene();
     this.cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.material = new ShaderMaterial({
-      uniforms: { tDiffuse: { value: this.rt.texture }, uLevels: { value: levels } },
+      uniforms: {
+        tDiffuse: { value: this.rt.texture }, uLevels: { value: levels },
+        uBright: { value: bright }, uGamma: { value: gamma },
+      },
       vertexShader: POST_VERT,
       fragmentShader: POST_FRAG,
       depthTest: false,

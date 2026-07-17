@@ -130,28 +130,54 @@ export function resolveCollision(body, cg, radius = 1.0, off = 0) {
   return contacts;
 }
 
-// Push a body out of ambient agents (peds / traffic) so they are SOLID — you
-// can't walk or drive through them. Agents carry render position rx/rz and a
-// radius r; only the body is pushed (agents keep their lane), which reads as
-// solid without ragdolling the crowd. Allocation-free.
-export function resolveAgents(body, agents, bodyRadius) {
+// Resolve a body against ambient agents (peds / traffic). With `power > 0` the
+// agents are PUSHABLE: the body shoves them out of the way and imparts its own
+// momentum as a knockback (agents carry kx/kz, which ambient decays), so a car
+// bowls people over and keeps going instead of dead-stopping on them. With
+// `power === 0` they're immovable and the body is pushed out instead (a parked
+// wall of a bus, or a person who can't budge a moving car). Allocation-free.
+//
+// `n` points from the body toward the agent.
+export function resolveAgents(body, agents, bodyRadius, power = 0) {
+  const bvx = body.vx || 0;
+  const bvz = body.vz || 0;
+  const bspeed = Math.sqrt(bvx * bvx + bvz * bvz);
   for (let i = 0; i < agents.length; i++) {
     const a = agents[i];
     if (!a.live) continue;
-    const dx = body.x - a.rx;
-    const dz = body.z - a.rz;
+    const dx = a.rx - body.x;
+    const dz = a.rz - body.z;
     const rr = bodyRadius + a.r;
     const d2 = dx * dx + dz * dz;
     if (d2 >= rr * rr || d2 < 1e-6) continue;
     const d = Math.sqrt(d2);
     const inv = 1 / d;
-    const push = rr - d;
     const nX = dx * inv;
     const nZ = dz * inv;
-    body.x += nX * push;
-    body.z += nZ * push;
-    const vn = body.vx * nX + body.vz * nZ;
-    if (vn < 0) { body.vx -= vn * nX; body.vz -= vn * nZ; }
+    const pen = rr - d;
+    const closing = bvx * nX + bvz * nZ; // body speed INTO the agent (>0 = charging it)
+
+    if (power > 0 && a.kx !== undefined) {
+      // shove the agent clear of the body this frame …
+      a.x += nX * pen;
+      a.z += nZ * pen;
+      // … and fling it: mostly the body's closing speed, a bump so a standing
+      // agent still reacts, all scaled by this body's shoving power.
+      const kick = (Math.max(0, closing) * 0.9 + bspeed * 0.2 + 1.2) * power;
+      a.kx += nX * kick;
+      a.kz += nZ * kick;
+      // the body feels the contact but keeps most of its speed (momentum, not a wall)
+      if (closing > 0) {
+        const react = Math.min(closing, 3.5) * 0.18;
+        body.vx -= nX * react;
+        body.vz -= nZ * react;
+      }
+    } else {
+      // immovable: push the body out and cancel its velocity into the agent
+      body.x -= nX * pen;
+      body.z -= nZ * pen;
+      if (closing > 0) { body.vx -= closing * nX; body.vz -= closing * nZ; }
+    }
   }
 }
 

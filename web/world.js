@@ -39,11 +39,11 @@ const scene = new THREE.Scene();
 const FOG = new THREE.Color(0x6b5c50);
 scene.background = FOG.clone();
 scene.fog = new THREE.Fog(FOG.clone(), 12, FOG_FAR);
-const sun = new THREE.DirectionalLight(0xffe1b0, 1.9);
+const sun = new THREE.DirectionalLight(0xffe1b0, 2.15);
 sun.position.set(-0.5, 0.9, 0.4);
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xacc0d6, 0x3a352c, 0.95));
-const ambLight = new THREE.AmbientLight(0xffffff, 0.26);
+scene.add(new THREE.HemisphereLight(0xbcd0e2, 0x453f36, 1.15));
+const ambLight = new THREE.AmbientLight(0xffffff, 0.4);
 scene.add(ambLight);
 
 const mat = makeCityMaterial();
@@ -392,7 +392,7 @@ function enterBuilding() {
   groundPlane.visible = false;
   interiorGroup.visible = true;
   scene.fog.far = 70; // tighter fog indoors
-  ambLight.intensity = 0.75; // interiors are lit
+  ambLight.intensity = 0.92; // interiors are lit
   mode = 'interior'; camReady = false; promptDoor = null; promptLift = false;
   $('s-near2').textContent = it.label;
 }
@@ -412,7 +412,7 @@ function exitBuilding() {
   worldGroup.visible = true;
   groundPlane.visible = true;
   scene.fog.far = FOG_FAR;
-  ambLight.intensity = 0.26;
+  ambLight.intensity = 0.4;
   interior = null;
   // drop the player back outside, at the door
   ped.x = returnDoor.x; ped.z = returnDoor.z; ped.yaw = returnDoor.yaw + Math.PI;
@@ -491,13 +491,13 @@ function frame(now) {
         stepCar(car, input, DT);
         resolveCollision(car, grid, 0.95, 1.4);
         resolveCollision(car, grid, 0.95, -1.4);
-        resolveAgents(car, ambient.cars, 1.4); // solid traffic
-        resolveAgents(car, ambient.peds, 1.4); // solid pedestrians
+        resolveAgents(car, ambient.cars, 1.4, 0.6); // shunt other traffic
+        resolveAgents(car, ambient.peds, 1.4, 1.0); // bowl over pedestrians
       } else {
         stepPed(ped, input, DT);
         resolveCollision(ped, grid, 0.5);
-        resolveAgents(ped, ambient.peds, 0.4);
-        resolveAgents(ped, ambient.cars, 0.4);
+        resolveAgents(ped, ambient.peds, 0.4, 0.5); // shove people aside
+        resolveAgents(ped, ambient.cars, 0.4, 0);   // can't push a car on foot
       }
     }
     acc -= DT;

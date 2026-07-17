@@ -61,8 +61,22 @@ export class Ambient {
     for (let i = 0; i < pedCount; i++) this.peds.push(this._blankPed());
     for (let i = 0; i < carCount; i++) this.cars.push(this._blankCar());
   }
-  _blankPed() { return { x: 0, z: 0, dir: 0, node: 0, cross: 0, rx: 0, rz: 0, yaw: 0, bob: 0, live: false, r: 0.45 }; }
-  _blankCar() { return { x: 0, z: 0, dir: 0, node: 0, speed: 0, cruise: 0, type: 0, color: 0, rx: 0, rz: 0, yaw: 0, vyaw: 0, live: false, r: 1.5 }; }
+  _blankPed() { return { x: 0, z: 0, dir: 0, node: 0, cross: 0, rx: 0, rz: 0, yaw: 0, bob: 0, live: false, r: 0.45, kx: 0, kz: 0 }; }
+  _blankCar() { return { x: 0, z: 0, dir: 0, node: 0, speed: 0, cruise: 0, type: 0, color: 0, rx: 0, rz: 0, yaw: 0, vyaw: 0, live: false, r: 1.5, kx: 0, kz: 0 }; }
+
+  // apply and decay a knockback impulse (set by collision.resolveAgents when the
+  // player shoves this agent). Returns the stagger this frame so locomotion can
+  // stand down while the agent is being flung.
+  _knock(a, dt) {
+    const k = Math.sqrt(a.kx * a.kx + a.kz * a.kz);
+    if (k < 0.05) { a.kx = 0; a.kz = 0; return 0; }
+    a.x += a.kx * dt;
+    a.z += a.kz * dt;
+    const decay = Math.max(0, 1 - 7 * dt); // ~7/s friction
+    a.kx *= decay;
+    a.kz *= decay;
+    return k;
+  }
 
   setCity(ox, oz, radius, active) { this.ox = ox; this.oz = oz; this.radius = radius; this.active = active; }
   inCity(x, z) { const dx = x - this.ox; const dz = z - this.oz; return dx * dx + dz * dz < this.radius * this.radius; }
@@ -112,10 +126,12 @@ export class Ambient {
         if (!s) { c.live = false; continue; }
         c.x = s.x; c.z = s.z; c.dir = s.dir; c.node = s.node; c.live = true;
         c.cruise = 7 + r() * 7; c.speed = c.cruise; c.vyaw = DYAW[s.dir];
-        c.type = (r() * 4) | 0; c.color = (r() * 10) | 0;
+        c.type = (r() * 4) | 0; c.color = (r() * 10) | 0; c.kx = 0; c.kz = 0;
         this._renderCar(c);
         continue;
       }
+      // being shoved? slide with the impulse and ease off the gas while reeling
+      const cstagger = this._knock(c, dt);
       // ease the visual heading toward the grid heading (arced turns)
       let dy = DYAW[c.dir] - c.vyaw;
       if (dy > Math.PI) dy -= Math.PI * 2; else if (dy < -Math.PI) dy += Math.PI * 2;
@@ -141,6 +157,7 @@ export class Ambient {
           c.speed = Math.min(c.speed, 1.5);
         }
       }
+      if (cstagger > 2) c.speed = Math.min(c.speed, 1.5); // reeling from a hit
       const horiz = c.dir === 0 || c.dir === 2;
       c.x += DVX[c.dir] * c.speed * dt;
       c.z += DVZ[c.dir] * c.speed * dt;
@@ -166,12 +183,15 @@ export class Ambient {
         if (!this.active) { p.live = false; continue; }
         const s = this._spawn(px, pz, viewYaw, false);
         if (!s) { p.live = false; continue; }
-        p.x = s.x; p.z = s.z; p.dir = s.dir; p.node = s.node; p.cross = 0; p.live = true; p.bob = r() * 6.28;
+        p.x = s.x; p.z = s.z; p.dir = s.dir; p.node = s.node; p.cross = 0; p.live = true; p.bob = r() * 6.28; p.kx = 0; p.kz = 0;
         this._renderPed(p);
         continue;
       }
-      p.x += DVX[p.dir] * PED_SPEED * dt;
-      p.z += DVZ[p.dir] * PED_SPEED * dt;
+      // knocked back? slide with the impulse and stop walking until it fades
+      const pstagger = this._knock(p, dt);
+      const walk = pstagger > 1.5 ? 0 : PED_SPEED;
+      p.x += DVX[p.dir] * walk * dt;
+      p.z += DVZ[p.dir] * walk * dt;
       p.bob += dt * 7;
       const horiz = p.dir === 0 || p.dir === 2;
       const sign = p.dir === 0 || p.dir === 1 ? 1 : -1;
