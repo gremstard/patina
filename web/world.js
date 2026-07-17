@@ -57,6 +57,7 @@ scene.add(interiorGroup);
 let interiorMesh = null;
 let interiorGrid = null;
 let returnDoor = null;
+let interior = null; // { seed, type, w, d, floors, cur, elevator }
 const renderOrigin = { x: 0, z: 0 };
 
 function bufGeo(d) {
@@ -250,6 +251,7 @@ function loadCity(s) {
   }
   const doorRecs = city.doors.map((d) => ({
     x: s.x + d.x, z: s.z + d.z, hw: 0.6, hd: 0.6, door: true, yaw: d.yaw, seed: d.seed, itype: d.itype,
+    w: d.w, d: d.d, floors: d.floors,
   }));
   loaded.set(s.id, { s, meshes, colliders, doors: doorRecs });
   rebuildGrid();
@@ -350,32 +352,55 @@ function toggleCar() {
 }
 
 // ── Enter / exit a building (interiors, §17 — a separate loaded cell) ─────────
+// Interiors are sized to the building's real footprint and have as many floors as
+// the building is tall; the elevator (back-right corner) rebuilds the cell for the
+// next floor. See src/worldgen/interior.js.
 let promptDoor = null;
-function enterBuilding() {
-  if (mode !== 'foot' || !promptDoor) return;
-  const door = promptDoor;
-  const it = generateInterior(door.seed, door.itype);
+let promptLift = false;
+function buildFloor(f, place) {
+  const it = generateInterior(interior.seed, interior.type, {
+    w: interior.w, d: interior.d, floors: interior.floors, floor: f,
+  });
   if (interiorMesh) { interiorMesh.geometry.dispose(); interiorGroup.remove(interiorMesh); }
   interiorMesh = new THREE.Mesh(bufGeo(it), interiorMat);
   interiorGroup.add(interiorMesh);
   interiorGrid = buildColliderGrid(it.colliders);
-  it.colliders.exit = it.exit; // stash for exit trigger
   interiorGroup.userData.exit = it.exit;
   interiorGroup.userData.label = it.label;
+  interior.cur = f;
+  interior.elevator = it.elevator;
+  interior.spawn = it.spawn;
+  // where to stand: the lift (arriving by elevator) or the door (arriving from outside)
+  const at = place === 'lift' ? { x: it.elevator.x, z: it.elevator.z } : it.spawn;
+  ped.x = at.x; ped.z = at.z; ped.yaw = it.spawn.yaw;
+  ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
+  return it;
+}
+function enterBuilding() {
+  if (mode !== 'foot' || !promptDoor) return;
+  const door = promptDoor;
+  interior = {
+    seed: door.seed, type: door.itype,
+    w: door.w || 12, d: door.d || 10, floors: Math.max(1, door.floors || 1), cur: 0,
+  };
+  const it = buildFloor(0, 'door');
   // remember where to drop the player back outside
   returnDoor = { x: door.x, z: door.z, yaw: door.yaw };
-  // move the player into the room (room-local coords)
   worldGroup.remove(pedMesh);
   interiorGroup.add(pedMesh);
-  ped.x = it.spawn.x; ped.z = it.spawn.z; ped.yaw = it.spawn.yaw;
-  ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
   worldGroup.visible = false;
   groundPlane.visible = false;
   interiorGroup.visible = true;
   scene.fog.far = 70; // tighter fog indoors
   ambLight.intensity = 0.75; // interiors are lit
-  mode = 'interior'; camReady = false; promptDoor = null;
+  mode = 'interior'; camReady = false; promptDoor = null; promptLift = false;
   $('s-near2').textContent = it.label;
+}
+function useElevator() {
+  if (mode !== 'interior' || !interior || interior.floors < 2) return;
+  const next = (interior.cur + 1) % interior.floors;
+  buildFloor(next, 'lift');
+  camReady = false;
 }
 function exitBuilding() {
   if (mode !== 'interior') return;
@@ -386,6 +411,7 @@ function exitBuilding() {
   groundPlane.visible = true;
   scene.fog.far = FOG_FAR;
   ambLight.intensity = 0.26;
+  interior = null;
   // drop the player back outside, at the door
   ped.x = returnDoor.x; ped.z = returnDoor.z; ped.yaw = returnDoor.yaw + Math.PI;
   ped.vx = 0; ped.vz = 0; ped.speed = 0; ped.prevX = ped.x; ped.prevZ = ped.z; ped.prevYaw = ped.yaw;
@@ -414,7 +440,7 @@ const PREVENT = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1 };
 window.addEventListener('keydown', (e) => {
   if (PREVENT[e.code]) e.preventDefault();
   if (!keys.has(e.code)) {
-    if (e.code === 'KeyE') toggleCar();
+    if (e.code === 'KeyE') mode === 'interior' ? useElevator() : toggleCar();
     if (e.code === 'KeyF') mode === 'interior' ? exitBuilding() : enterBuilding();
     if (e.code === 'KeyM') toggleMap();
   }
@@ -484,7 +510,10 @@ function frame(now) {
     pedMesh.rotation.y = rp.yaw;
     placeCamera(rp.x, rp.z, rp.yaw, 5.0, 2.8, interiorGrid, 0, 0);
     const ex = interiorGroup.userData.exit;
-    promptDoor = ex && Math.hypot(ped.x - ex.x, ped.z - ex.z) < 2.4 ? 'leave' : null;
+    // the exit door only exists on the ground floor
+    promptDoor = interior && interior.cur === 0 && ex && Math.hypot(ped.x - ex.x, ped.z - ex.z) < 2.4 ? 'leave' : null;
+    const lift = interior && interior.elevator;
+    promptLift = !!(lift && interior.floors > 1 && Math.hypot(ped.x - lift.x, ped.z - lift.z) < 2.2);
     post.render(scene, camera);
     updateHud();
     requestAnimationFrame(frame);
@@ -588,9 +617,18 @@ function updateHud() {
   for (const p of ambient.peds) if (p.live) live++;
   $('s-people').textContent = inside ? 0 : live;
   $('s-mode').textContent = mode === 'drive' ? 'driving' : inside ? 'indoors' : 'on foot';
+  if (inside && interior) {
+    const lbl = interiorGroup.userData.label || 'Room';
+    $('s-near2').textContent = interior.floors > 1 ? `${lbl} · floor ${interior.cur + 1}/${interior.floors}` : lbl;
+  }
 
   let ph = '';
-  if (inside) { if (promptDoor) ph = '<kbd>F</kbd> leave'; }
+  if (inside) {
+    const parts = [];
+    if (promptDoor) parts.push('<kbd>F</kbd> leave');
+    if (promptLift) parts.push(`<kbd>E</kbd> elevator → floor ${(interior.cur + 1) % interior.floors + 1}`);
+    ph = parts.join(' &nbsp; ');
+  }
   else if (mode === 'foot') {
     if (promptDoor) ph = `<kbd>F</kbd> enter ${promptDoor.itype}`;
     else if (promptCar) ph = '<kbd>E</kbd> get in';
@@ -681,5 +719,22 @@ if (typeof window !== 'undefined') window.__dbg = {
     return d.itype;
   },
   exitBuilding: () => exitBuilding(),
+  enterNearestTall() {
+    if (mode === 'drive') { mode = 'foot'; ped.x = car.x - 2.6; ped.z = car.z; }
+    let best = null;
+    for (const e of loaded.values()) for (const d of e.doors) {
+      if (!best || (d.floors || 1) > (best.floors || 1)) best = d;
+    }
+    if (!best) return null;
+    ped.x = best.x; ped.z = best.z; promptDoor = best; enterBuilding();
+    return { itype: best.itype, floors: best.floors, w: best.w, d: best.d };
+  },
+  gotoLift() {
+    if (mode !== 'interior' || !interior || !interior.elevator) return;
+    ped.x = interior.elevator.x; ped.z = interior.elevator.z;
+    ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
+  },
 };
+if (typeof window !== 'undefined') window.__interior = () =>
+  interior ? { type: interior.type, w: interior.w, d: interior.d, floors: interior.floors, cur: interior.cur } : null;
 requestAnimationFrame(frame);

@@ -70,8 +70,9 @@ function interiorType(lot, seed) {
 }
 
 // Door on the facade that faces the street (outward from the block centre) + an
-// interactable door record (position just outside, facing in) for interiors.
-function addDoor(mb, doors, bx, bz, cx, cz, fw, fd, seed, lot) {
+// interactable door record for interiors. Carries the building's real footprint
+// and floor count so the interior matches the building's size.
+function addDoor(mb, doors, bx, bz, cx, cz, fw, fd, floors, seed, lot) {
   const ox = cx - bx;
   const oz = cz - bz;
   const face = Math.abs(ox) >= Math.abs(oz) ? (ox >= 0 ? 0 : 2) : (oz >= 0 ? 1 : 3);
@@ -86,6 +87,7 @@ function addDoor(mb, doors, bx, bz, cx, cz, fw, fd, seed, lot) {
     x: dx + OUTDX[face] * 0.9, z: dz + OUTDZ[face] * 0.9,
     yaw: Math.atan2(-OUTDX[face], -OUTDZ[face]), // face into the building
     seed: hash(seed, 'interior') >>> 0, itype: interiorType(lot, seed),
+    w: fw, d: fd, floors,
   });
 }
 
@@ -96,7 +98,7 @@ function placeBuilding(mb, col, doors, bx, bz, cx, cz, fw, fd, floors, roofType,
   mb.box(cx, height / 2, cz, fw, height, fd, wc);
   col.push({ x: cx, z: cz, hw: fw / 2, hd: fd / 2 });
   facadeWindows(mb, cx, cz, fw, fd, floors);
-  addDoor(mb, doors, bx, bz, cx, cz, fw, fd, seed, lot);
+  addDoor(mb, doors, bx, bz, cx, cz, fw, fd, floors, seed, lot);
   if (roofType === 'gable') {
     const rise = Math.min(Math.min(fw, fd) * (0.35 + 0.18 * unit(hash(seed, 'rr'))), FLOOR * 1.5);
     mb.gable(cx, height, cz, fw, fd, rise, roof(palette, hash(seed, 'r')));
