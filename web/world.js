@@ -385,6 +385,8 @@ let promptDoor = null;
 let promptLift = false;
 let promptWork = null; // the nearby job station, if any
 let working = null; // { job, t } while a shift is in progress
+let promptShop = null; // the nearby shop counter, if any
+let shopOpen = false;
 function buildFloor(f, place) {
   const it = generateInterior(interior.seed, interior.btype, {
     w: interior.w, d: interior.d, floors: interior.floors, floor: f,
@@ -399,7 +401,9 @@ function buildFloor(f, place) {
   interior.elevator = it.elevator;
   interior.spawn = it.spawn;
   interior.job = it.job;
+  interior.shop = it.shop;
   working = null; // changing floors ends any shift
+  if (shopOpen) closeShop();
   // where to stand: the lift (arriving by elevator) or the door (arriving from outside)
   const at = place === 'lift' ? { x: it.elevator.x, z: it.elevator.z } : it.spawn;
   ped.x = at.x; ped.z = at.z; ped.yaw = it.spawn.yaw;
@@ -443,6 +447,34 @@ function stepWork(dt) {
     working.t = 0; // roll straight into the next shift while you stay clocked in
   }
 }
+// Buying — open the shop counter, click an item to buy it.
+function openShop() {
+  if (!promptShop) return;
+  shopOpen = true;
+  working = null; // can't work and shop at once
+  $('shop-title').textContent = interiorGroup.userData.label || 'Shop';
+  $('shop-sub').textContent = 'click an item to buy';
+  renderShop();
+  $('shop').classList.add('open');
+}
+function closeShop() { shopOpen = false; $('shop').classList.remove('open'); }
+function renderShop() {
+  const stock = promptShop ? promptShop.stock : [];
+  $('shop-list').innerHTML = stock.map((it, i) =>
+    `<div class="item${player.money < it.price ? ' cant' : ''}" data-i="${i}"><span>${it.name}</span><span class="price">$${it.price}</span></div>`,
+  ).join('');
+}
+function buyFromShop(i) {
+  const it = promptShop && promptShop.stock[i];
+  if (!it) return;
+  if (!paySpend(it.price)) { toast(`need $${it.price}`, '#c0605a'); return; }
+  giveItem(it.id, it.name, it.price, 1);
+  renderShop(); // refresh affordability
+}
+$('shop-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.item');
+  if (row) buyFromShop(Number(row.dataset.i));
+});
 function useElevator() {
   if (mode !== 'interior' || !interior || interior.floors < 2) return;
   const next = (interior.cur + 1) % interior.floors;
@@ -494,6 +526,8 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyF') mode === 'interior' ? exitBuilding() : enterBuilding();
     if (e.code === 'KeyM') toggleMap();
     if (e.code === 'KeyI') toggleInv();
+    if (e.code === 'KeyB') { if (shopOpen) closeShop(); else if (promptShop) openShop(); }
+    if (e.code === 'Escape' && shopOpen) closeShop();
   }
   keys.add(e.code);
 });
@@ -536,7 +570,8 @@ function frame(now) {
         if (input.throttle || input.brake || input.steer) working = null; // moving clocks you out
         else stepWork(DT);
       }
-      stepPed(ped, working ? NO_INPUT : input, DT);
+      const frozen = working || shopOpen; // held while working or browsing the shop
+      stepPed(ped, frozen ? NO_INPUT : input, DT);
       resolveCollision(ped, interiorGrid, 0.4);
     } else {
       const viewYaw = mode === 'drive' ? car.yaw : ped.yaw;
@@ -572,6 +607,9 @@ function frame(now) {
     promptLift = !!(lift && interior.floors > 1 && Math.hypot(ped.x - lift.x, ped.z - lift.z) < 2.2);
     const jb = interior && interior.job;
     promptWork = jb && Math.hypot(ped.x - jb.x, ped.z - jb.z) < 2.2 ? jb : null;
+    const sh = interior && interior.shop;
+    promptShop = sh && Math.hypot(ped.x - sh.x, ped.z - sh.z) < 2.6 ? sh : null;
+    if (shopOpen && !promptShop) closeShop(); // walked away from the counter
     post.render(scene, camera);
     updateHud();
     requestAnimationFrame(frame);
@@ -698,6 +736,7 @@ function updateHud() {
       const parts = [];
       if (promptWork) parts.push(`<kbd>E</kbd> work · ${promptWork.role} $${promptWork.pay}/shift`);
       else if (promptLift) parts.push(`<kbd>E</kbd> elevator → floor ${(interior.cur + 1) % interior.floors + 1}`);
+      if (promptShop && !shopOpen) parts.push('<kbd>B</kbd> shop');
       if (promptDoor) parts.push('<kbd>F</kbd> leave');
       ph = parts.join(' &nbsp; ');
     }
@@ -886,6 +925,15 @@ if (typeof window !== 'undefined') window.__dbg = {
   get working() { return working; },
   get promptWork() { return promptWork; },
   work() { useJobOrLift(); },
+  gotoShop() {
+    if (mode !== 'interior' || !interior || !interior.shop) return null;
+    ped.x = interior.shop.x; ped.z = interior.shop.z; ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
+    return interior.shop.stock;
+  },
+  buy(i) { buyFromShop(i); },
+  get shopOpen() { return shopOpen; },
+  get promptShop() { return promptShop; },
+  openShop() { openShop(); },
   gainMoney: (n) => gainMoney(n),
   giveItem: (id, name, v, q) => giveItem(id, name, v, q),
   enterType(btype) {

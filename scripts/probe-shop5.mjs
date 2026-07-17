@@ -1,0 +1,17 @@
+import { chromium } from 'playwright-core';
+import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+const exe = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
+const url = pathToFileURL(join(process.cwd(),'dist','world.html')).href;
+const browser = await chromium.launch({ executablePath: exe, args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--ignore-gpu-blocklist','--enable-unsafe-swiftshader'] });
+const page = await browser.newPage({ viewport:{width:1280,height:760} });
+await page.goto(url,{waitUntil:'load'}); await page.waitForTimeout(800);
+await page.evaluate(()=>{ window.__dbg.enterType('mixed'); window.__dbg.gotoShop(); window.__dbg.gainMoney(200); });
+await page.waitForTimeout(400);
+const pre = await page.evaluate(()=>({ps:!!window.__dbg.promptShop, open:window.__dbg.shopOpen}));
+await page.keyboard.down('KeyB'); await page.waitForTimeout(30); await page.keyboard.up('KeyB');
+await page.waitForTimeout(150);
+const post = await page.evaluate(()=>({ps:!!window.__dbg.promptShop, open:window.__dbg.shopOpen}));
+await page.screenshot({path:join('dist','shop.png')});
+await browser.close();
+console.log('before B:',JSON.stringify(pre),' after B:',JSON.stringify(post));

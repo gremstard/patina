@@ -62,6 +62,16 @@
   #inv .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
   #inv .row .q { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
   #inv .empty { color: var(--ink-dim); font-style: italic; }
+  /* shop panel — centered, buy by clicking a row */
+  #shop { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 300px; max-height: 72%; overflow: auto; background: rgba(10,14,16,0.96); border: 1px solid var(--rust); border-radius: 5px; padding: 16px 18px; font-size: 13px; display: none; z-index: 12; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+  #shop.open { display: block; }
+  #shop h3 { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--rust); margin-bottom: 4px; }
+  #shop .sub { color: var(--ink-dim); font-size: 11px; margin-bottom: 12px; }
+  #shop .item { display: flex; justify-content: space-between; align-items: center; padding: 7px 8px; border-radius: 3px; cursor: pointer; border: 1px solid transparent; }
+  #shop .item:hover { background: rgba(208,112,60,0.16); border-color: var(--rust); }
+  #shop .item .price { color: #8fcf7a; font-variant-numeric: tabular-nums; font-weight: 600; }
+  #shop .item.cant .price { color: #c0605a; }
+  #shop .close { margin-top: 12px; text-align: center; color: var(--ink-dim); font-size: 11px; }
 
   footer { display: flex; align-items: center; gap: 16px; padding: 7px 20px; border-top: 1px solid var(--line); background: var(--ground-2); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-faint); flex-wrap: wrap; }
   footer .phase { color: var(--rust); letter-spacing: 0.16em; text-transform: uppercase; }
@@ -97,7 +107,7 @@
           <kbd>Shift</kbd> run · <kbd>E</kbd> in/out of a car<br />
           <kbd>F</kbd> enter / leave a building<br />
           <kbd>M</kbd> map: world → city roads → close<br />
-          <kbd>I</kbd> inventory<br />
+          <kbd>I</kbd> inventory · <kbd>B</kbd> buy (in a shop)<br />
           click a city on the world map to fast-travel
         </div>
       </section>
@@ -131,6 +141,7 @@
       <div id="money">$0</div>
       <div id="toast"></div>
       <div id="inv"><h3>Inventory · <kbd>I</kbd></h3><div id="inv-list"></div></div>
+      <div id="shop"><h3 id="shop-title">Shop</h3><div class="sub" id="shop-sub"></div><div id="shop-list"></div><div class="close"><kbd>B</kbd> / <kbd>Esc</kbd> to leave</div></div>
     </div>
   </main>
 

@@ -13,6 +13,7 @@
 
 import { MeshBuilder } from '../render/meshbuilder.js';
 import { hash, unit } from '../core/hash.js';
+import { shopStock } from '../sim/items.js';
 
 const FLOOR_H = 3.2;
 const FLOOR_WOOD = [0.29, 0.22, 0.15];
@@ -253,6 +254,12 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     mb.box(jx, 0.72, jz, 0.7, 0.7, 0.6, DESK);
   }
 
+  // A shop counter you can buy from (the same room can also be worked).
+  let shop = null;
+  if (type === 'shop') {
+    shop = { x: 0, z: isGround ? -hd + 4.6 : -hd + 3.0, stock: shopStock(seed) };
+  }
+
   const geo = mb.build();
   return {
     seed, type, floor: fl, floors, label: LABEL[type] || 'Room',
@@ -260,7 +267,7 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     colliders: col,
     spawn: { x: 0, z: -hd + 1.2, yaw: 0 },
     exit: { x: 0, z: -hd + 1.0 },
-    elevator, job,
+    elevator, job, shop,
     size: { W, D, H },
     stats: { triangles: geo.triangles },
   };
