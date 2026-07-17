@@ -78,15 +78,50 @@ export class Ambient {
     return k;
   }
 
-  setCity(ox, oz, radius, active) { this.ox = ox; this.oz = oz; this.radius = radius; this.active = active; }
+  setCity(ox, oz, radius, active, streets = null) {
+    this.ox = ox; this.oz = oz; this.radius = radius; this.active = active; this.streets = streets;
+  }
   inCity(x, z) { const dx = x - this.ox; const dz = z - this.oz; return dx * dx + dz * dz < this.radius * this.radius; }
+
+  // ── street network (block occupancy) ──────────────────────────────────────
+  // With no occupancy grid (unit tests) every block is "present" — old behaviour.
+  _present(i, j) {
+    const s = this.streets;
+    if (!s) return true;
+    const n = s.n;
+    if (i < -n || i > n || j < -n || j > n) return false;
+    return s.occ[(i + n) * (2 * n + 1) + (j + n)] === 1;
+  }
+  // Is a car in a corridor flanked by two present blocks (i.e. a real road)?
+  _carRoad(x, z, dir) {
+    if (!this.streets) return true;
+    const horiz = dir === 0 || dir === 2;
+    const c = Math.round(((horiz ? x : z) - (horiz ? this.ox : this.oz)) / PITCH);
+    const perp = horiz ? z : x;
+    const n = Math.floor((perp - (horiz ? this.oz : this.ox)) / PITCH);
+    return horiz
+      ? this._present(c, n) && this._present(c, n + 1)
+      : this._present(n, c) && this._present(n + 1, c);
+  }
+  // Is a ped hugging the kerb of a present block?
+  _pedWalk(x, z, dir) {
+    if (!this.streets) return true;
+    const horiz = dir === 0 || dir === 2;
+    const c = Math.round(((horiz ? x : z) - (horiz ? this.ox : this.oz)) / PITCH);
+    const j = Math.round((( horiz ? z : x) - (horiz ? this.oz : this.ox)) / PITCH);
+    return horiz ? this._present(c, j) : this._present(j, c);
+  }
 
   // spawn on the grid, in the rear arc behind the view so it can't be seen popping
   _spawn(px, pz, viewYaw, isCar) {
     const r = this.rng;
+    // Cars spawn in a tight rear arc (±59°, always behind the heading) and farther
+    // out, so one never pops in ahead of you to crash into. Peds can be wider/closer.
+    const arc = isCar ? Math.PI * 0.66 : Math.PI * 1.15;
+    const minR = isCar ? 48 : SPAWN_MIN;
     for (let t = 0; t < 10; t++) {
-      const ang = viewYaw + Math.PI + (r() - 0.5) * Math.PI * 1.15;
-      const rad = SPAWN_MIN + (BUBBLE - SPAWN_MIN) * r();
+      const ang = viewYaw + Math.PI + (r() - 0.5) * arc;
+      const rad = minR + (BUBBLE - minR) * r();
       const x = px + Math.sin(ang) * rad;
       const z = pz + Math.cos(ang) * rad;
       if (!this.inCity(x, z)) continue;
@@ -96,11 +131,13 @@ export class Ambient {
       if (isCar) {
         const gx = horiz ? x : streetLine(x, this.ox);
         const gz = horiz ? streetLine(z, this.oz) : z;
+        if (!this._carRoad(gx, gz, dir)) continue; // only spawn on a real road
         const node = horiz ? nextCenter(gx, sign, this.ox) : nextCenter(gz, sign, this.oz);
         return { x: gx, z: gz, dir, node };
       }
       const gx = horiz ? x : sidewalkLine(x, this.ox);
       const gz = horiz ? sidewalkLine(z, this.oz) : z;
+      if (!this._pedWalk(gx, gz, dir)) continue; // only spawn on a real sidewalk
       const travel = horiz ? gx : gz;
       return { x: gx, z: gz, dir, node: travel + sign * (14 + r() * 22) };
     }
@@ -130,6 +167,8 @@ export class Ambient {
         this._renderCar(c);
         continue;
       }
+      // left the road network (turned toward a gap / city edge)? recycle it
+      if (this._carRoad(c.x, c.z, c.dir) === false) { c.live = false; continue; }
       // being shoved? slide with the impulse and ease off the gas while reeling
       const cstagger = this._knock(c, dt);
       // ease the visual heading toward the grid heading (arced turns)
@@ -187,6 +226,8 @@ export class Ambient {
         this._renderPed(p);
         continue;
       }
+      // wandered off the sidewalk network (and not mid-crossing)? recycle it
+      if (!p.cross && this._pedWalk(p.x, p.z, p.dir) === false) { p.live = false; continue; }
       // knocked back? slide with the impulse and stop walking until it fades
       const pstagger = this._knock(p, dt);
       const walk = pstagger > 1.5 ? 0 : PED_SPEED;
@@ -199,8 +240,8 @@ export class Ambient {
       const passed = sign > 0 ? travel >= p.node : travel <= p.node;
       if (passed) {
         if (p.cross) {
-          // finished crossing the street — land on the far sidewalk, resume parallel
-          if (horiz) p.z = sidewalkLine(p.z, this.oz); else p.x = sidewalkLine(p.x, this.ox);
+          // finished crossing — now standing on the far kerb; resume along it
+          if (horiz) p.x = sidewalkLine(p.x, this.ox); else p.z = sidewalkLine(p.z, this.oz);
           p.cross = 0;
           p.dir = r() < 0.5 ? (p.dir + 1) % 4 : (p.dir + 3) % 4;
           const t2 = p.dir === 0 || p.dir === 2 ? p.x : p.z;
@@ -216,11 +257,16 @@ export class Ambient {
             const t2 = p.dir === 0 || p.dir === 2 ? p.x : p.z;
             p.node = t2 + (p.dir === 0 || p.dir === 1 ? 1 : -1) * (16 + r() * 22);
           } else {
-            // cross the street: turn perpendicular and walk one corridor across
-            p.dir = r() < 0.5 ? (p.dir + 1) % 4 : (p.dir + 3) % 4;
+            // step off the kerb and cross EXACTLY one corridor to the far kerb —
+            // outward toward the street, never inward into the building (the old
+            // code walked CORRIDOR+30 m, straight through the opposite building).
+            const pc = horiz ? p.z : p.x;              // the kerb line we're on
+            const o = horiz ? this.oz : this.ox;
+            const center = o + Math.round((pc - o) / PITCH) * PITCH;
+            const side = pc >= center ? 1 : -1;         // cross away from block centre
+            p.dir = horiz ? (side > 0 ? 1 : 3) : (side > 0 ? 0 : 2);
             p.cross = 1;
-            const t2 = p.dir === 0 || p.dir === 2 ? p.x : p.z;
-            p.node = t2 + (p.dir === 0 || p.dir === 1 ? 1 : -1) * (CORRIDOR + BLOCK * 0.5);
+            p.node = pc + side * CORRIDOR;
           }
         }
       }

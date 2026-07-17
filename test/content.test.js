@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { buildCarType, CAR_TYPES, CAR_COLORS } from '../src/render/car.js';
 import { Ambient } from '../src/sim/ambient.js';
 import { resolveAgents } from '../src/sim/collision.js';
+import { BLOCK, CORRIDOR } from '../src/core/constants.js';
 import { buildRoads } from '../src/worldgen/roads.js';
 import { generateWorldIndex } from '../src/worldgen/worldIndex.js';
 import { generateInterior } from '../src/worldgen/interior.js';
@@ -40,6 +41,21 @@ test('an immovable agent (power 0) stops the body instead of moving', () => {
   assert.equal(agent.kz, 0, 'agent did not move');
   assert.ok(body.vz < 1, `body stopped at the wall, got ${body.vz}`);
   assert.ok(body.z < 0, 'body pushed back out of penetration');
+});
+
+test('with a street grid, ambient agents stay on real roads (never the gap block)', () => {
+  const a = new Ambient(40, 16, 5);
+  // 7×7 blocks all present except the centre (0,0) — a plaza gap
+  const n = 3; const W = 2 * n + 1;
+  const occ = new Uint8Array(W * W).fill(1);
+  occ[(0 + n) * W + (0 + n)] = 0;
+  a.setCity(0, 0, 4000, true, { occ, n, pitch: BLOCK + CORRIDOR });
+  for (let i = 0; i < 300; i++) a.update(0, 0, 0, 1 / 60);
+  const liveP = a.peds.filter((p) => p.live);
+  const liveC = a.cars.filter((c) => c.live);
+  assert.ok(liveP.length + liveC.length > 8, 'streets should still be populated around the gap');
+  for (const c of liveC) assert.ok(a._carRoad(c.x, c.z, c.dir), 'a car is driving off the road grid');
+  for (const p of liveP) if (!p.cross) assert.ok(a._pedWalk(p.x, p.z, p.dir), 'a ped is walking off the sidewalk grid');
 });
 
 test('the highway network is a spanning tree over every labelled settlement', () => {

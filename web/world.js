@@ -99,7 +99,7 @@ treeInst.frustumCulled = false;
 worldGroup.add(treeInst); // same — absolute coords under the world group
 let sceneryX = 1e9;
 let sceneryZ = 1e9;
-const ROADW = 9;
+const ROADW = 16; // interstate width — wide enough to spot across open country
 
 function rebuildScenery(px, pz) {
   // roads within view range → one merged strip mesh (absolute coords)
@@ -253,7 +253,7 @@ function loadCity(s) {
     x: s.x + d.x, z: s.z + d.z, hw: 0.6, hd: 0.6, door: true, yaw: d.yaw, seed: d.seed, btype: d.btype,
     w: d.w, d: d.d, floors: d.floors,
   }));
-  loaded.set(s.id, { s, meshes, colliders, doors: doorRecs });
+  loaded.set(s.id, { s, meshes, colliders, doors: doorRecs, streets: city.streets });
   rebuildGrid();
 }
 
@@ -280,9 +280,9 @@ function nearestLoaded(px, pz) {
   let best = null; let bd = Infinity;
   for (const e of loaded.values()) {
     const dx = e.s.x - px; const dz = e.s.z - pz; const d = dx * dx + dz * dz;
-    if (d < bd) { bd = d; best = e.s; }
+    if (d < bd) { bd = d; best = e; }
   }
-  return best;
+  return best; // the loaded entry {s, streets, …}
 }
 
 // ── Player state ─────────────────────────────────────────────────────────────
@@ -524,14 +524,19 @@ function frame(now) {
 
   const ax = activeX(); const az = activeZ();
   if ((ax - renderOrigin.x) ** 2 + (az - renderOrigin.z) ** 2 > 500 * 500) {
+    // rebase the floating origin — and slide the smoothed camera by the SAME
+    // delta so it stays continuous. Without this the camera target jumps ~500 m
+    // in render space and the lerp smears it across a few frames (the glitch).
+    const dox = ax - renderOrigin.x; const doz = az - renderOrigin.z;
     renderOrigin.x = ax; renderOrigin.z = az;
     worldGroup.position.set(-renderOrigin.x, 0, -renderOrigin.z);
+    camPos.x -= dox; camPos.z -= doz;
   }
   if ((streamTick++ % 10) === 0) {
     updateStreaming(ax, az);
-    const c = nearestLoaded(ax, az);
-    if (c) ambient.setCity(c.x, c.z, CITY_R[c.tier], nearIn(c, ax, az));
-    else ambient.setCity(0, 0, 0, false);
+    const e = nearestLoaded(ax, az);
+    if (e) ambient.setCity(e.s.x, e.s.z, CITY_R[e.s.tier], nearIn(e.s, ax, az), e.streets);
+    else ambient.setCity(0, 0, 0, false, null);
   }
   if ((ax - sceneryX) ** 2 + (az - sceneryZ) ** 2 > 150 * 150) rebuildScenery(ax, az);
 
@@ -657,8 +662,26 @@ function updateHud() {
 const mapCanvas = $('map');
 const mctx = mapCanvas.getContext('2d');
 let mapOpen = false;
-function toggleMap() { mapOpen = !mapOpen; mapCanvas.classList.toggle('open', mapOpen); }
+// two views: 'world' (all cities + interstates, click to fast-travel) and
+// 'city' (the street grid of the city you're in). M cycles world → city → closed.
+let mapMode = 'world';
+function applyMap() {
+  mapCanvas.classList.toggle('open', mapOpen);
+  const hint = $('maphint');
+  if (hint) hint.textContent = !mapOpen ? 'M · open map'
+    : mapMode === 'world' ? 'M · city roads · click a city to travel'
+      : 'M · close';
+  drawMap();
+}
+function cycleMap() {
+  if (!mapOpen) { mapOpen = true; mapMode = 'world'; }
+  else if (mapMode === 'world') mapMode = 'city';
+  else mapOpen = false;
+  applyMap();
+}
+function toggleMap() { cycleMap(); }
 mapCanvas.addEventListener('click', (e) => {
+  if (mapMode !== 'world') return; // fast-travel only from the world map
   const r = mapCanvas.getBoundingClientRect();
   const wx = (((e.clientX - r.left) / r.width) * 2 - 1) * HALF_WORLD_M;
   const wz = (((e.clientY - r.top) / r.height) * 2 - 1) * HALF_WORLD_M;
@@ -668,9 +691,13 @@ mapCanvas.addEventListener('click', (e) => {
     const dx = s.x - wx; const dz = s.z - wz; const d = dx * dx + dz * dz;
     if (d < bd) { bd = d; best = s; }
   }
-  if (best) { spawnAt(best); toggleMap(); }
+  if (best) { spawnAt(best); mapOpen = false; applyMap(); }
 });
 function drawMap(wx = activeX(), wz = activeZ()) {
+  if (mapOpen && mapMode === 'city') return drawCityMap(wx, wz);
+  return drawWorldMap(wx, wz);
+}
+function drawWorldMap(wx, wz) {
   const W = mapCanvas.width;
   const s = W / WORLD_M;
   const toX = (x) => (x + HALF_WORLD_M) * s;
@@ -679,18 +706,66 @@ function drawMap(wx = activeX(), wz = activeZ()) {
   mctx.fillRect(0, 0, W, W);
   mctx.strokeStyle = 'rgba(208,112,60,0.4)';
   mctx.strokeRect(0.5, 0.5, W - 1, W - 1);
+  // interstates — the MST connecting the labelled settlements
+  mctx.strokeStyle = 'rgba(190,150,110,0.55)';
+  mctx.lineWidth = 1;
+  mctx.beginPath();
+  for (const e of roads) { mctx.moveTo(toX(e.ax), toZ(e.az)); mctx.lineTo(toX(e.bx), toZ(e.bz)); }
+  mctx.stroke();
   for (const st of index.settlements) {
     if (st.tier === 'hamlet') continue;
     const sz = st.tier === 'metro' ? 3 : st.tier === 'city' ? 2 : 1.2;
     mctx.fillStyle = CULT[st.culture] || '#8593a0';
     mctx.fillRect(toX(st.x) - sz / 2, toZ(st.z) - sz / 2, sz, sz);
   }
-  const px = toX(wx); const pz = toZ(wz);
+  drawPlayerMark(toX(wx), toZ(wz));
+}
+function drawCityMap(wx, wz) {
+  const W = mapCanvas.width;
+  mctx.fillStyle = '#0a0d0f';
+  mctx.fillRect(0, 0, W, W);
+  mctx.strokeStyle = 'rgba(208,112,60,0.4)';
+  mctx.strokeRect(0.5, 0.5, W - 1, W - 1);
+  const e = nearestLoaded(wx, wz);
+  if (!e || !e.streets) {
+    mctx.fillStyle = '#8a8078';
+    mctx.font = '12px monospace'; mctx.textAlign = 'center';
+    mctx.fillText('out in open country — no city here', W / 2, W / 2);
+    mctx.textAlign = 'left';
+    return;
+  }
+  const { occ, n, pitch } = e.streets;
+  const span = (n + 1) * pitch * 2;
+  const s = W / span;
+  const toX = (x) => W / 2 + (x - e.s.x) * s;
+  const toZ = (z) => W / 2 + (z - e.s.z) * s;
+  const gridN = 2 * n + 1;
+  const pres = (i, j) => (i < -n || i > n || j < -n || j > n ? 0 : occ[(i + n) * gridN + (j + n)]);
+  // roads first (between present neighbours), then the block footprints on top
+  mctx.strokeStyle = 'rgba(150,140,128,0.5)';
+  mctx.lineWidth = Math.max(1.5, pitch * s * 0.16);
+  mctx.beginPath();
+  for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
+    if (!pres(i, j)) continue;
+    const cx = toX(e.s.x + i * pitch); const cz = toZ(e.s.z + j * pitch);
+    if (pres(i + 1, j)) { mctx.moveTo(cx, cz); mctx.lineTo(toX(e.s.x + (i + 1) * pitch), cz); }
+    if (pres(i, j + 1)) { mctx.moveTo(cx, cz); mctx.lineTo(cx, toZ(e.s.z + (j + 1) * pitch)); }
+  }
+  mctx.stroke();
+  const bs = Math.max(2, pitch * s * 0.62);
+  mctx.fillStyle = 'rgba(120,132,142,0.85)';
+  for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
+    if (!pres(i, j)) continue;
+    mctx.fillRect(toX(e.s.x + i * pitch) - bs / 2, toZ(e.s.z + j * pitch) - bs / 2, bs, bs);
+  }
+  drawPlayerMark(toX(wx), toZ(wz));
+}
+function drawPlayerMark(px, pz) {
   mctx.fillStyle = '#f0d9c2';
   mctx.beginPath(); mctx.arc(px, pz, 2.5, 0, Math.PI * 2); mctx.fill();
   const yaw = mode === 'drive' ? car.yaw : ped.yaw;
-  mctx.strokeStyle = '#e89a5a';
-  mctx.beginPath(); mctx.moveTo(px, pz); mctx.lineTo(px + Math.sin(yaw) * 8, pz + Math.cos(yaw) * 8); mctx.stroke();
+  mctx.strokeStyle = '#e89a5a'; mctx.lineWidth = 1.5;
+  mctx.beginPath(); mctx.moveTo(px, pz); mctx.lineTo(px + Math.sin(yaw) * 9, pz + Math.cos(yaw) * 9); mctx.stroke();
 }
 
 // ── Controls / resize / boot ─────────────────────────────────────────────────

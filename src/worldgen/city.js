@@ -243,30 +243,56 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
   gb.plane(0, 0, span, span, -0.06, SURFACE.ground);
 
   const N = Math.ceil(R / PITCH) + 1;
+  const W = 2 * N + 1;
+  // §7 street network: decide which blocks EXIST first (gaps = plazas/parks, plus
+  // the irregular wobbled outline), so paving and the ambient agents can respect
+  // the holes — roads connect present blocks and never stub out into a bare lot.
+  const occ = new Uint8Array(W * W);
+  const present = (i, j) => (i < -N || i > N || j < -N || j > N ? 0 : occ[(i + N) * W + (j + N)]);
+  for (let j = -N; j <= N; j++) {
+    for (let i = -N; i <= N; i++) {
+      const dist = Math.hypot(i * PITCH, j * PITCH);
+      const blockSeed = hash(citySeed, i, j);
+      const wobble = 0.82 + 0.34 * unit(hash(blockSeed, 'edge'));
+      if (dist > R * wobble) continue;
+      const zone = zoneAt(tier, dist);
+      const gapP = zone === 'core' ? 0.05 : zone === 'ring' ? 0.1 : 0.16;
+      if (unit(hash(blockSeed, 'gap')) < gapP) continue;
+      occ[(i + N) * W + (j + N)] = 1;
+    }
+  }
+
   const colliders = []; // building footprints (city space) for the driving sim
   const park = []; // parked-car spots {x,z,yaw} along the kerbs
   const doors = []; // interactable building doors → interiors
   let blocks = 0;
   let buildings = 0;
   const zones = { core: 0, ring: 0, edge: 0 };
+  const HB = BLOCK / 2; // kerb: asphalt reaches this far toward a GAP
+  const HP = PITCH / 2; // full corridor: asphalt reaches this far toward a NEIGHBOUR
 
   for (let j = -N; j <= N; j++) {
     for (let i = -N; i <= N; i++) {
+      if (!present(i, j)) continue;
       const bx = i * PITCH;
       const bz = j * PITCH;
       const dist = Math.hypot(bx, bz);
       const blockSeed = hash(citySeed, i, j);
-      const wobble = 0.82 + 0.34 * unit(hash(blockSeed, 'edge')); // irregular outline
-      if (dist > R * wobble) continue;
       const zone = zoneAt(tier, dist);
-      const gapP = zone === 'core' ? 0.05 : zone === 'ring' ? 0.1 : 0.16;
-      if (unit(hash(blockSeed, 'gap')) < gapP) continue; // plazas / parks / lots
       zones[zone]++;
       blocks++;
 
-      // asphalt tile (block + its share of the streets), then a raised sidewalk
-      // slab — a real 12 cm curb you can see peds walk on (a plane has no edge).
-      gb.plane(bx, bz, PITCH, PITCH, -0.02, SURFACE.asphalt);
+      // Pave asphalt out to the full corridor ONLY toward a present neighbour;
+      // toward a gap, stop at the kerb — so a road never runs into an empty lot.
+      const ee = present(i + 1, j) ? HP : HB;
+      const ww = present(i - 1, j) ? HP : HB;
+      const nn = present(i, j + 1) ? HP : HB;
+      const ss = present(i, j - 1) ? HP : HB;
+      gb.quad(
+        bx - ww, -0.02, bz - ss, bx - ww, -0.02, bz + nn,
+        bx + ee, -0.02, bz + nn, bx + ee, -0.02, bz - ss, ...SURFACE.asphalt,
+      );
+      // a raised sidewalk slab — a real 12 cm curb you can see peds walk on.
       gb.box(bx, 0.06, bz, BLOCK, 0.12, BLOCK, SURFACE.sidewalk);
 
       buildings += buildBlock(mb, colliders, doors, bx, bz, zone, rules(tier, zone), paletteKey, blockSeed, maxH);
@@ -297,6 +323,8 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
     colliders,
     parking: park,
     doors,
+    // block-occupancy grid so the ambient sim keeps agents on the real streets
+    streets: { occ, n: N, pitch: PITCH },
     stats: {
       blocks, buildings, zones, parked: park.length, doors: doors.length,
       triangles: geo.triangles + gnd.triangles,
