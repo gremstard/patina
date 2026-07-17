@@ -260,6 +260,11 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     shop = { x: 0, z: isGround ? -hd + 4.6 : -hd + 3.0, stock: shopStock(seed) };
   }
 
+  // A till you can rob. Banks pay far more but bring far more heat.
+  let robbery = null;
+  if (type === 'shop') robbery = { kind: 'shop', x: 0, z: isGround ? -hd + 4.6 : -hd + 3.0 };
+  else if (type === 'bank') robbery = { kind: 'bank', x: 0, z: -0.6 };
+
   const geo = mb.build();
   return {
     seed, type, floor: fl, floors, label: LABEL[type] || 'Room',
@@ -267,7 +272,7 @@ export function generateInterior(seed, btype = 'house', opts = {}) {
     colliders: col,
     spawn: { x: 0, z: -hd + 1.2, yaw: 0 },
     exit: { x: 0, z: -hd + 1.0 },
-    elevator, job, shop,
+    elevator, job, shop, robbery,
     size: { W, D, H },
     stats: { triangles: geo.triangles },
   };

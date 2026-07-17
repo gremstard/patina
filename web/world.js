@@ -318,6 +318,103 @@ function takeItem(id, qty = 1) { const ok = removeItem(player, id, qty); if (ok)
 function toggleInv() { invOpen = !invOpen; $('inv').classList.toggle('open', invOpen); if (invOpen) renderInventory(); }
 renderMoney(); renderInventory();
 
+// ── Crime: wanted level + cops ────────────────────────────────────────────────
+let wanted = 0; // 0..5 stars
+let heat = 0; // seconds of clean behaviour before a star drops
+const WANTED_DECAY = 14; // one star cools off every 14 s clean
+let robbing = null; // { target, t, dur, haul } while a hold-up is in progress
+function renderWanted() {
+  const el = $('wanted');
+  el.classList.toggle('hot', wanted > 0);
+  let s = '';
+  for (let i = 0; i < 5; i++) s += i < wanted ? '★' : '<span class="off">★</span>';
+  el.innerHTML = s;
+}
+function addHeat(stars) { wanted = Math.min(5, wanted + stars); heat = WANTED_DECAY; renderWanted(); }
+function coolHeat(dt) {
+  if (wanted <= 0 || robbing) return;
+  heat -= dt;
+  if (heat <= 0) { wanted = Math.max(0, wanted - 1); heat = WANTED_DECAY; renderWanted(); if (wanted === 0) despawnCop(); }
+}
+renderWanted();
+
+// A police cruiser that homes in once you're wanted; touch = busted.
+const policeMat = makeCityMaterial();
+policeMat.color = new THREE.Color(0.4, 0.46, 0.8); // navy cruiser
+const policeMesh = new THREE.Mesh(typeGeo[1], policeMat);
+policeMesh.visible = false;
+policeMesh.frustumCulled = false;
+worldGroup.add(policeMesh);
+const cop = { x: 0, z: 0, vx: 0, vz: 0, yaw: 0, active: false };
+function spawnCop() {
+  if (cop.active) return;
+  const vy = mode === 'drive' ? car.yaw : ped.yaw;
+  cop.x = activeX() - Math.sin(vy) * 48; cop.z = activeZ() - Math.cos(vy) * 48;
+  cop.vx = 0; cop.vz = 0; cop.active = true; policeMesh.visible = true;
+}
+function despawnCop() { cop.active = false; policeMesh.visible = false; }
+function stepCop(dt) {
+  if (!cop.active) return;
+  const dx = activeX() - cop.x; const dz = activeZ() - cop.z;
+  const dist = Math.hypot(dx, dz) || 1;
+  const spd = mode === 'drive' ? 16 : 8.5; // catches a runner; a car can outrun it
+  cop.vx = (dx / dist) * spd; cop.vz = (dz / dist) * spd;
+  cop.x += cop.vx * dt; cop.z += cop.vz * dt;
+  resolveCollision(cop, grid, 1.1); // no driving through walls
+  cop.yaw = Math.atan2(dx, dz);
+  if (dist < 3.4 && mode !== 'interior') busted();
+}
+function busted() {
+  const fine = Math.min(player.money, 40 + wanted * 30);
+  if (fine > 0) { addMoney(player, -fine); renderMoney(); savePlayer(player); }
+  toast(`BUSTED · -$${fine}`, '#e05a4a');
+  wanted = 0; heat = 0; renderWanted(); despawnCop();
+}
+
+// ── Robbery + mugging ─────────────────────────────────────────────────────────
+let promptRob = null;
+function robTill() {
+  if (robbing || !promptRob) return;
+  const bank = promptRob.kind === 'bank';
+  robbing = {
+    kind: promptRob.kind, t: 0,
+    dur: bank ? 3.6 : 2.2,
+    haul: bank ? 220 + Math.floor(Math.random() * 380) : 30 + Math.floor(Math.random() * 60),
+  };
+  working = null; if (shopOpen) closeShop();
+  addHeat(bank ? 3 : 1); // the alarm goes off the moment you pull the job
+}
+function stepRob(dt) {
+  if (!robbing) return;
+  robbing.t += dt;
+  if (robbing.t >= robbing.dur) {
+    gainMoney(robbing.haul);
+    toast(`robbed $${robbing.haul}!`, '#e0b36a');
+    robbing = null;
+  }
+}
+function mugNearest() {
+  // grab the closest ambient pedestrian on the street
+  let best = null; let bd = 2.4 * 2.4;
+  for (const p of ambient.peds) {
+    if (!p.live) continue;
+    const d = (p.rx - ped.x) ** 2 + (p.rz - ped.z) ** 2;
+    if (d < bd) { bd = d; best = p; }
+  }
+  if (!best) return false;
+  const haul = 5 + Math.floor(Math.random() * 21);
+  gainMoney(haul); toast(`mugged $${haul}`, '#e0b36a'); addHeat(1);
+  // shove the victim away so they scatter
+  const dx = best.rx - ped.x; const dz = best.rz - ped.z; const d = Math.hypot(dx, dz) || 1;
+  best.kx = (dx / d) * 9; best.kz = (dz / d) * 9;
+  return true;
+}
+function doRob() {
+  if (robbing) { robbing = null; return; } // give up the hold-up
+  if (mode === 'interior') { if (promptRob) robTill(); }
+  else if (mode === 'foot') mugNearest();
+}
+
 function spawnAt(s) {
   for (const id of [...loaded.keys()]) unloadCity(id);
   const cx = s.x + PITCH * 0.5;
@@ -402,7 +499,8 @@ function buildFloor(f, place) {
   interior.spawn = it.spawn;
   interior.job = it.job;
   interior.shop = it.shop;
-  working = null; // changing floors ends any shift
+  interior.robbery = it.robbery;
+  working = null; robbing = null; // changing floors ends any shift / hold-up
   if (shopOpen) closeShop();
   // where to stand: the lift (arriving by elevator) or the door (arriving from outside)
   const at = place === 'lift' ? { x: it.elevator.x, z: it.elevator.z } : it.spawn;
@@ -552,6 +650,7 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyI') toggleInv();
     if (e.code === 'KeyB') { if (shopOpen) closeShop(); else if (promptShop) openShop(); }
     if (e.code === 'KeyH' && mode === 'foot') rentHome();
+    if (e.code === 'KeyR') doRob();
     if (e.code === 'Escape' && shopOpen) closeShop();
   }
   keys.add(e.code);
@@ -589,13 +688,18 @@ function frame(now) {
   last = now;
   while (acc >= DT) {
     readInput();
+    coolHeat(DT);
     if (mode === 'interior') {
       if (working) {
         // clocked in — held at the station, working the shift
         if (input.throttle || input.brake || input.steer) working = null; // moving clocks you out
         else stepWork(DT);
       }
-      const frozen = working || shopOpen; // held while working or browsing the shop
+      if (robbing) {
+        if (input.throttle || input.brake || input.steer) robbing = null; // bottled it
+        else stepRob(DT);
+      }
+      const frozen = working || robbing || shopOpen; // held while working / robbing / shopping
       stepPed(ped, frozen ? NO_INPUT : input, DT);
       resolveCollision(ped, interiorGrid, 0.4);
     } else {
@@ -613,6 +717,9 @@ function frame(now) {
         resolveAgents(ped, ambient.peds, 0.4, 0.5); // shove people aside
         resolveAgents(ped, ambient.cars, 0.4, 0);   // can't push a car on foot
       }
+      // the law responds once you're properly wanted
+      if (wanted >= 2 && !cop.active) spawnCop();
+      stepCop(DT);
     }
     acc -= DT;
   }
@@ -635,6 +742,8 @@ function frame(now) {
     const sh = interior && interior.shop;
     promptShop = sh && Math.hypot(ped.x - sh.x, ped.z - sh.z) < 2.6 ? sh : null;
     if (shopOpen && !promptShop) closeShop(); // walked away from the counter
+    const rb = interior && interior.robbery;
+    promptRob = rb && Math.hypot(ped.x - rb.x, ped.z - rb.z) < 2.6 ? rb : null;
     post.render(scene, camera);
     updateHud();
     requestAnimationFrame(frame);
@@ -680,6 +789,7 @@ function frame(now) {
     promptDoor = nearestDoor(doorGrid, ped.x, ped.z, 2.4);
   }
   groundPlane.position.set(rx, -0.12, rz);
+  if (cop.active) { policeMesh.position.set(cop.x, 0, cop.z); policeMesh.rotation.y = cop.yaw; }
   renderAmbient();
 
   post.render(scene, camera);
@@ -757,11 +867,16 @@ function updateHud() {
       const pct = Math.floor((working.t / working.job.shift) * 10);
       const bar = '▓'.repeat(pct) + '░'.repeat(10 - pct);
       ph = `${working.job.role} · ${bar} · <kbd>E</kbd> clock out`;
+    } else if (robbing) {
+      const pct = Math.floor((robbing.t / robbing.dur) * 10);
+      const bar = '▓'.repeat(pct) + '░'.repeat(10 - pct);
+      ph = `robbing the ${robbing.kind}… ${bar} · <kbd>R</kbd> abort`;
     } else {
       const parts = [];
       if (promptWork) parts.push(`<kbd>E</kbd> work · ${promptWork.role} $${promptWork.pay}/shift`);
       else if (promptLift) parts.push(`<kbd>E</kbd> elevator → floor ${(interior.cur + 1) % interior.floors + 1}`);
       if (promptShop && !shopOpen) parts.push('<kbd>B</kbd> shop');
+      if (promptRob) parts.push(`<kbd>R</kbd> rob the ${promptRob.kind}`);
       if (promptDoor) parts.push('<kbd>F</kbd> leave');
       ph = parts.join(' &nbsp; ');
     }
@@ -977,6 +1092,23 @@ if (typeof window !== 'undefined') window.__dbg = {
   },
   rent() { rentHome(); },
   get home() { return player.home; },
+  get wanted() { return wanted; },
+  get cop() { return cop; },
+  rob() { doRob(); },
+  gotoRob() {
+    if (mode !== 'interior' || !interior || !interior.robbery) return null;
+    ped.x = interior.robbery.x; ped.z = interior.robbery.z; ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
+    return interior.robbery;
+  },
+  get robbing() { return robbing; },
+  gotoPed() {
+    if (mode !== 'foot') return null;
+    let best = null; let bd = Infinity;
+    for (const p of ambient.peds) { if (!p.live) continue; const d = (p.rx - ped.x) ** 2 + (p.rz - ped.z) ** 2; if (d < bd) { bd = d; best = p; } }
+    if (!best) return null;
+    ped.x = best.rx + 1.0; ped.z = best.rz; ped.prevX = ped.x; ped.prevZ = ped.z; acc = 0;
+    return { dist: Math.sqrt(bd) };
+  },
   gainMoney: (n) => gainMoney(n),
   giveItem: (id, name, v, q) => giveItem(id, name, v, q),
   enterType(btype) {
