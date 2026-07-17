@@ -30,6 +30,12 @@ const SOFA = [0.32, 0.36, 0.32];
 const VAULT = [0.28, 0.32, 0.35];
 const WOODDK = [0.22, 0.16, 0.11];
 const GOODS = [[0.62, 0.32, 0.26], [0.32, 0.42, 0.52], [0.72, 0.62, 0.32], [0.42, 0.52, 0.42]];
+const PLANT = [0.24, 0.36, 0.22];
+const POT = [0.3, 0.22, 0.16];
+const WATER = [0.32, 0.44, 0.52];
+const CABINET = [0.42, 0.44, 0.46];
+const PARTITION = [0.46, 0.44, 0.4];
+const SCREEN = [0.09, 0.11, 0.13];
 
 const LABEL = { office: 'Office', shop: 'Shop', apartment: 'Apartment', house: 'House', bank: 'Bank' };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -37,6 +43,21 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 function solid(mb, col, x, y, z, w, h, d, color) {
   mb.box(x, y + h / 2, z, w, h, d, color);
   if (col) col.push({ x, z, hw: w / 2 + 0.12, hd: d / 2 + 0.12 });
+}
+
+// a potted plant — decorative, blocks the player a little
+function plant(mb, col, x, z) {
+  mb.box(x, 0.2, z, 0.5, 0.4, 0.5, POT);
+  mb.box(x, 0.85, z, 0.75, 0.9, 0.75, PLANT);
+  if (col) col.push({ x, z, hw: 0.4, hd: 0.4 });
+}
+
+// a desk with a monitor and a chair tucked in
+function workstation(mb, col, x, z, face) {
+  solid(mb, col, x, 0, z, 1.7, 0.72, 0.9, DESK);
+  mb.box(x, 0.8, z, 1.4, 0.05, 0.7, METAL); // desktop
+  mb.box(x - 0.35, 1.02, z - 0.15 * face, 0.55, 0.4, 0.05, SCREEN); // monitor
+  mb.box(x, 0.36, z + 0.85 * face, 0.5, 0.72, 0.5, METAL); // chair
 }
 
 // opts: { w, d, floors, floor }
@@ -88,13 +109,36 @@ export function generateInterior(seed, type = 'house', opts = {}) {
   };
 
   if (type === 'office') {
-    for (let x = -hw + 3; x < hw - 2; x += 4.2) {
-      for (let z = -hd + 3.5; z < hd - 2; z += 4.0) {
-        if (!usable(x, z)) continue;
-        solid(mb, col, x, 0, z, 1.7, 0.75, 0.9, DESK);
-        mb.box(x, 0.82, z, 1.2, 0.06, 0.55, METAL);
-        solid(mb, null, x, 0, z - 1.0, 0.5, 0.9, 0.5, METAL); // chair
+    // ground floor gets a reception counter + waiting area near the entrance
+    if (isGround) {
+      solid(mb, col, 0, 0, -hd + 3.4, Math.min(W - 6, 7), 1.05, 1.0, COUNTER);
+      solid(mb, col, -hw + 2.2, 0, -hd + 2.2, 2.6, 0.7, 0.9, SOFA);
+      plant(mb, col, hw - 1.4, -hd + 1.8);
+    }
+    // cubicle rows: desks in facing pairs with a low partition down the middle
+    const z0 = -hd + (isGround ? 6.6 : 3.4);
+    for (let z = z0; z < hd - 2.4; z += 3.6) {
+      // a partition wall runs the length of the row (skip the elevator corner)
+      const partEnd = Math.min(ex - 3.6, hw - 1.6);
+      if (usable(0, z)) mb.box((-hw + 2.4 + partEnd) / 2, 0.85, z, partEnd - (-hw + 2.4), 1.3, 0.09, PARTITION);
+      for (let x = -hw + 2.6; x < ex - 3.6; x += 2.5) {
+        if (usable(x, z - 1)) workstation(mb, col, x, z - 1, -1); // facing -z
+        if (usable(x, z + 1)) workstation(mb, col, x, z + 1, +1); // facing +z
       }
+    }
+    // filing cabinets along the left wall, a water cooler, corner plants
+    for (let z = -hd + 3; z < hd - 2.4; z += 1.5) {
+      if (usable(-hw + 1.3, z)) solid(mb, col, -hw + 0.9, 0, z, 0.7, 1.3, 1.2, CABINET);
+    }
+    if (usable(-hw + 2.2, hd - 2.0)) {
+      solid(mb, col, -hw + 2.0, 0, hd - 1.6, 0.5, 1.25, 0.5, WATER); // water cooler
+    }
+    plant(mb, col, -hw + 1.6, hd - 1.6);
+    if (!isGround && unit(hash(seed, fl, 'meet')) > 0.45 && usable(hw - 3.2, hd - 4.0)) {
+      // a small meeting table with chairs on upper floors, sometimes
+      solid(mb, col, ex - 5.0, 0, hd - 4.2, 2.4, 0.75, 1.4, DESK);
+      mb.box(ex - 5.0, 0.36, hd - 5.2, 0.5, 0.72, 0.5, METAL);
+      mb.box(ex - 5.0, 0.36, hd - 3.2, 0.5, 0.72, 0.5, METAL);
     }
   } else if (type === 'shop') {
     if (isGround) solid(mb, col, 0, 0, -hd + 3.4, Math.min(W - 4, 8), 1.0, 0.8, COUNTER);

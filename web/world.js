@@ -404,6 +404,8 @@ function useElevator() {
 }
 function exitBuilding() {
   if (mode !== 'interior') return;
+  // the door only exists on the ground floor — no walking out a 2nd-storey wall
+  if (interior && interior.cur !== 0) return;
   interiorGroup.remove(pedMesh);
   worldGroup.add(pedMesh);
   interiorGroup.visible = false;
