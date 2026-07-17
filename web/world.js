@@ -29,6 +29,12 @@ import { FOG_FAR, BLOCK, CORRIDOR, HALF_WORLD_M, WORLD_M, CITY_R } from '../src/
 
 const PITCH = BLOCK + CORRIDOR;
 const $ = (id) => document.getElementById(id);
+// nearest street-junction (corridor intersection) of the city centred at (cx,cz)
+function snapJunction(x, z, cx, cz) {
+  const kx = Math.round((x - cx) / PITCH - 0.5);
+  const kz = Math.round((z - cz) / PITCH - 0.5);
+  return [cx + (kx + 0.5) * PITCH, cz + (kz + 0.5) * PITCH];
+}
 const index = generateWorldIndex(8829);
 const CULT = { anglic: '#c05a3e', iberic: '#d99a4e', rustbelt: '#8593a0', conlang: '#9fae86' };
 
@@ -125,8 +131,10 @@ function rebuildScenery(px, pz) {
     const a = Math.min(e.ra * 0.85, len * 0.45);
     const b = len - Math.min(e.rb * 0.85, len * 0.45);
     if (b <= a) continue;
-    const ax = e.ax + dx * a; const az = e.az + dz * a;
-    const bx = e.ax + dx * b; const bz = e.az + dz * b;
+    // snap each end to the nearest street junction of ITS city, so the
+    // interstate branches from a real road rather than a random point.
+    const [ax, az] = snapJunction(e.ax + dx * a, e.az + dz * a, e.ax, e.az);
+    const [bx, bz] = snapJunction(e.ax + dx * b, e.az + dz * b, e.bx, e.bz);
     const nx = -dz * ROADW * 0.5; const nz = dx * ROADW * 0.5;
     mb.quad(
       ax + nx, 0.0, az + nz, bx + nx, 0.0, bz + nz,
@@ -970,9 +978,9 @@ function drawWorldMap(wx, wz) {
   mctx.fillRect(0, 0, W, W);
   mctx.strokeStyle = 'rgba(208,112,60,0.4)';
   mctx.strokeRect(0.5, 0.5, W - 1, W - 1);
-  // interstates — the MST connecting the labelled settlements
-  mctx.strokeStyle = 'rgba(190,150,110,0.55)';
-  mctx.lineWidth = 1;
+  // interstates — the MST connecting the labelled settlements (blue)
+  mctx.strokeStyle = '#4d8fd6';
+  mctx.lineWidth = 1.4;
   mctx.beginPath();
   for (const e of roads) { mctx.moveTo(toX(e.ax), toZ(e.az)); mctx.lineTo(toX(e.bx), toZ(e.bz)); }
   mctx.stroke();
@@ -1027,6 +1035,25 @@ function drawCityMap(wx, wz) {
       const rz = toZ(e.s.z + (j + 0.5) * pitch);
       mctx.moveTo(toX(e.s.x + (i - 0.5) * pitch), rz); mctx.lineTo(toX(e.s.x + (i + 0.5) * pitch), rz);
     }
+  }
+  mctx.stroke();
+  // interstate exits — blue, branching from a road junction out toward each
+  // connected city.
+  const cr = CITY_R[e.s.tier] || 300;
+  mctx.strokeStyle = '#5a9ee0';
+  mctx.lineWidth = Math.max(2.2, pitch * s * 0.2);
+  mctx.lineCap = 'round';
+  mctx.beginPath();
+  for (const rd of roads) {
+    let ox; let oz;
+    if (Math.hypot(rd.ax - e.s.x, rd.az - e.s.z) < 1) { ox = rd.bx; oz = rd.bz; }
+    else if (Math.hypot(rd.bx - e.s.x, rd.bz - e.s.z) < 1) { ox = rd.ax; oz = rd.az; }
+    else continue;
+    const len = Math.hypot(ox - e.s.x, oz - e.s.z) || 1;
+    const dx = (ox - e.s.x) / len; const dz = (oz - e.s.z) / len;
+    const [jx, jz] = snapJunction(e.s.x + dx * cr * 0.85, e.s.z + dz * cr * 0.85, e.s.x, e.s.z);
+    const px = toX(jx); const pz = toZ(jz);
+    mctx.moveTo(px, pz); mctx.lineTo(px + dx * W, pz + dz * W);
   }
   mctx.stroke();
   mctx.lineCap = 'butt';

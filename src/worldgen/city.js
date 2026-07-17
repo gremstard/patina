@@ -251,16 +251,41 @@ export function generateCity(citySeed, tier = 'city', paletteKey = 'greyconcrete
   // between adjacent CITY blocks, so an empty lot never breaks the network.
   const cityG = new Uint8Array(W * W);
   const built = new Uint8Array(W * W);
+  // A SMOOTH blob outline: the boundary radius varies with ANGLE (a few low
+  // harmonics), not per block — so the edge is a clean organic shape instead of
+  // a ragged fringe that leaves stray single blocks poking out.
+  const bh = (k) => unit(hash(citySeed, 'bnd', k));
+  const boundary = (ang) => R * (0.84
+    + 0.11 * Math.sin(ang + bh(1) * 6.283)
+    + 0.06 * Math.sin(ang * 2 + bh(2) * 6.283)
+    + 0.045 * Math.sin(ang * 3 + bh(3) * 6.283));
   for (let j = -N; j <= N; j++) {
     for (let i = -N; i <= N; i++) {
-      const dist = Math.hypot(i * PITCH, j * PITCH);
-      const blockSeed = hash(citySeed, i, j);
-      const wobble = 0.82 + 0.34 * unit(hash(blockSeed, 'edge'));
-      if (dist > R * wobble) continue;
-      cityG[idx(i, j)] = 1;
-      const zone = zoneAt(tier, dist);
+      const bx = i * PITCH; const bz = j * PITCH;
+      if (Math.hypot(bx, bz) <= boundary(Math.atan2(bz, bx))) cityG[idx(i, j)] = 1;
+    }
+  }
+  // Prune thin spurs: two passes removing any block with fewer than two
+  // orthogonal neighbours (the centre is always kept). This clears the 1-wide
+  // tendrils and lone fringe blocks that read as "disconnected" on the map.
+  const nbCount = (i, j) => (cityG[idx(i + 1, j)] || 0) + (cityG[idx(i - 1, j)] || 0) + (cityG[idx(i, j + 1)] || 0) + (cityG[idx(i, j - 1)] || 0);
+  for (let pass = 0; pass < 2; pass++) {
+    const drop = [];
+    for (let j = -N + 1; j <= N - 1; j++) {
+      for (let i = -N + 1; i <= N - 1; i++) {
+        if (!cityG[idx(i, j)] || (i === 0 && j === 0)) continue;
+        if (nbCount(i, j) < 2) drop.push(idx(i, j));
+      }
+    }
+    for (const k of drop) cityG[k] = 0;
+  }
+  // buildings vs vacant lots, over the pruned outline
+  for (let j = -N; j <= N; j++) {
+    for (let i = -N; i <= N; i++) {
+      if (!cityG[idx(i, j)]) continue;
+      const zone = zoneAt(tier, Math.hypot(i * PITCH, j * PITCH));
       const gapP = zone === 'core' ? 0.05 : zone === 'ring' ? 0.1 : 0.16;
-      if (unit(hash(blockSeed, 'gap')) >= gapP) built[idx(i, j)] = 1; // else: a vacant lot
+      if (unit(hash(hash(citySeed, i, j), 'gap')) >= gapP) built[idx(i, j)] = 1; // else: a vacant lot
     }
   }
   // Keep only the component connected by road to the centre, so a jagged edge

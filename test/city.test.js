@@ -17,9 +17,9 @@ const SEED = 1997;
 // Pinned geometry digests. Regenerate ONLY when you change the generator on
 // purpose (node -e "import('./src/worldgen/city.js')..." prints them).
 const PINNED = {
-  metro: '1dba4727',
-  city: '97237f47',
-  town: '885fc477',
+  metro: '13fa3902',
+  city: 'd0bb34e3',
+  town: 'c6b77485',
 };
 
 test('city geometry digest matches the checked-in value', () => {
